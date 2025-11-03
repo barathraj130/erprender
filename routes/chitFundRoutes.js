@@ -1,10 +1,8 @@
 // routes/chitFundRoutes.js
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
+const { pool } = require('../db');
 
-// --- CHIT GROUP ROUTES ---
-// Paste this near the top of every route file:
 async function dbQuery(sql, params = []) {
     let client;
     try {
@@ -18,79 +16,90 @@ async function dbQuery(sql, params = []) {
         if (client) client.release();
     }
 }
+// --- CHIT GROUP ROUTES ---
+
 // GET all chit groups
-router.get('/', (req, res) => {
-    db.all(`SELECT * FROM chit_groups ORDER BY start_date DESC`, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+router.get('/', async (req, res) => {
+    try {
+        const rows = await dbQuery(`SELECT * FROM chit_groups ORDER BY start_date DESC`);
         res.json(rows);
-    });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
 // GET details for a single chit group
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
     const { id } = req.params;
     const responseData = {};
 
-    db.get(`SELECT * FROM chit_groups WHERE id = ?`, [id], (err, group) => {
-        if (err) return res.status(500).json({ error: err.message });
+    try {
+        const groupRows = await dbQuery(`SELECT * FROM chit_groups WHERE id = $1`, [id]);
+        const group = groupRows[0];
         if (!group) return res.status(404).json({ error: "Chit group not found" });
         responseData.group = group;
 
         const membersSql = `SELECT cm.id, cm.user_id, cm.is_prized_subscriber, u.username 
                             FROM chit_group_members cm JOIN users u ON cm.user_id = u.id
-                            WHERE cm.chit_group_id = ?`;
-        db.all(membersSql, [id], (err, members) => {
-            if (err) return res.status(500).json({ error: err.message });
-            responseData.members = members;
+                            WHERE cm.chit_group_id = $1`;
+        const members = await dbQuery(membersSql, [id]);
+        responseData.members = members;
 
-            const auctionsSql = `SELECT ca.*, u.username as winner_name FROM chit_auctions ca
-                                 JOIN users u ON ca.prized_subscriber_user_id = u.id
-                                 WHERE ca.chit_group_id = ? ORDER BY ca.auction_month ASC`;
-            db.all(auctionsSql, [id], (err, auctions) => {
-                if (err) return res.status(500).json({ error: err.message });
-                responseData.auctions = auctions;
-                res.json(responseData);
-            });
-        });
-    });
+        // Note: PG does not have GROUP_CONCAT or sqlite-style dynamic joins, relying on application logic to stitch the winner name.
+        const auctionsSql = `SELECT ca.*, u.username as winner_name FROM chit_auctions ca
+                             JOIN users u ON ca.prized_subscriber_user_id = u.id
+                             WHERE ca.chit_group_id = $1 ORDER BY ca.auction_month ASC`;
+        const auctions = await dbQuery(auctionsSql, [id]);
+        responseData.auctions = auctions;
+        res.json(responseData);
+
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
 // POST a new chit group
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
     const { group_name, chit_value, monthly_contribution, member_count, duration_months, foreman_commission_percent, start_date } = req.body;
     const sql = `INSERT INTO chit_groups (group_name, chit_value, monthly_contribution, member_count, duration_months, foreman_commission_percent, start_date)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`;
-    db.run(sql, [group_name, chit_value, monthly_contribution, member_count, duration_months, foreman_commission_percent, start_date], function(err) {
-        if (err) return res.status(400).json({ error: err.message });
-        res.status(201).json({ id: this.lastID, message: 'Chit group created.' });
-    });
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`;
+    try {
+        const result = await dbQuery(sql, [group_name, chit_value, monthly_contribution, member_count, duration_months, foreman_commission_percent, start_date]);
+        res.status(201).json({ id: result[0].id, message: 'Chit group created.' });
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
 });
 
 // --- CHIT MEMBER ROUTES ---
 
 // POST a new member to a group
-router.post('/:groupId/members', (req, res) => {
+router.post('/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
     const { user_id } = req.body;
     const join_date = new Date().toISOString().split('T')[0];
 
-    const sql = `INSERT INTO chit_group_members (chit_group_id, user_id, join_date) VALUES (?, ?, ?)`;
-    db.run(sql, [groupId, user_id, join_date], function(err) {
-        if (err) return res.status(400).json({ error: err.message });
-        res.status(201).json({ id: this.lastID, message: 'Member added.' });
-    });
+    const sql = `INSERT INTO chit_group_members (chit_group_id, user_id, join_date) VALUES ($1, $2, $3) RETURNING id`;
+    try {
+        const result = await dbQuery(sql, [groupId, user_id, join_date]);
+        res.status(201).json({ id: result[0].id, message: 'Member added.' });
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
 });
 
 
-// --- CHIT AUCTION ROUTES ---
+// --- CHIT AUCTION ROUTES (Transactionally correct in PG) ---
 
-// POST a new auction result
-router.post('/:groupId/auctions', (req, res) => {
+router.post('/:groupId/auctions', async (req, res) => {
     const { groupId } = req.params;
     const { auction_month, auction_date, winning_bid_discount, prized_subscriber_user_id } = req.body;
-
-    db.get('SELECT * FROM chit_groups WHERE id = ?', [groupId], (err, group) => {
-        if (err) return res.status(500).json({ error: err.message });
+    let client;
+    
+    try {
+        // 1. Get Group Details
+        const groupRows = await dbQuery('SELECT * FROM chit_groups WHERE id = $1', [groupId]);
+        const group = groupRows[0];
         if (!group) return res.status(404).json({ error: "Chit group not found" });
 
         const foreman_commission = group.chit_value * (group.foreman_commission_percent / 100);
@@ -99,59 +108,48 @@ router.post('/:groupId/auctions', (req, res) => {
         const net_monthly_contribution = group.monthly_contribution - dividend_amount;
         const payout_amount = group.chit_value - winning_bid_discount;
         
-        db.serialize(() => {
-            db.run("BEGIN TRANSACTION;");
+        client = await pool.connect();
+        await client.query("BEGIN");
             
-            const auctionSql = `INSERT INTO chit_auctions (chit_group_id, auction_month, auction_date, winning_bid_discount, dividend_amount, foreman_commission, net_monthly_contribution, prized_subscriber_user_id, payout_amount)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-            db.run(auctionSql, [groupId, auction_month, auction_date, winning_bid_discount, dividend_amount, foreman_commission, net_monthly_contribution, prized_subscriber_user_id, payout_amount], function(err) {
-                if (err) { db.run("ROLLBACK;"); return res.status(400).json({ error: err.message }); }
+        // 2. Insert Auction Result
+        const auctionSql = `INSERT INTO chit_auctions (chit_group_id, auction_month, auction_date, winning_bid_discount, dividend_amount, foreman_commission, net_monthly_contribution, prized_subscriber_user_id, payout_amount)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`;
+        await client.query(auctionSql, [groupId, auction_month, auction_date, winning_bid_discount, dividend_amount, foreman_commission, net_monthly_contribution, prized_subscriber_user_id, payout_amount]);
 
-                const updateMemberSql = `UPDATE chit_group_members SET is_prized_subscriber = 1, prized_month = ? WHERE chit_group_id = ? AND user_id = ?`;
-                db.run(updateMemberSql, [auction_month, groupId, prized_subscriber_user_id], (err) => {
-                    if (err) { db.run("ROLLBACK;"); return res.status(500).json({ error: err.message }); }
+        // 3. Update Member Status
+        const updateMemberSql = `UPDATE chit_group_members SET is_prized_subscriber = TRUE, prized_month = $1 WHERE chit_group_id = $2 AND user_id = $3`;
+        await client.query(updateMemberSql, [auction_month, groupId, prized_subscriber_user_id]);
 
-                    // Create transactions for all members
-                    db.all(`SELECT user_id FROM chit_group_members WHERE chit_group_id = ?`, [groupId], (err, members) => {
-                        if (err) { db.run("ROLLBACK;"); return res.status(500).json({ error: err.message }); }
+        // 4. Create Transactions for all members
+        const membersResult = await client.query(`SELECT user_id FROM chit_group_members WHERE chit_group_id = $1`, [groupId]);
+        const members = membersResult.rows;
 
-                        const txPromises = members.map(member => {
-                            return new Promise((resolve, reject) => {
-                                let amount, category, description;
-                                if (member.user_id === prized_subscriber_user_id) {
-                                    // Winner gets the payout
-                                    amount = payout_amount;
-                                    category = "Chit Payout to Customer";
-                                    description = `Payout for ${group.group_name} - Month ${auction_month}`;
-                                } else {
-                                    // Others pay the installment
-                                    amount = -net_monthly_contribution;
-                                    category = "Chit Installment Received from Customer";
-                                    description = `Installment for ${group.group_name} - Month ${auction_month}`;
-                                }
-                                const txSql = `INSERT INTO transactions (user_id, amount, description, category, date) VALUES (?, ?, ?, ?, ?)`;
-                                db.run(txSql, [member.user_id, amount, description, category, auction_date], (err) => {
-                                    if (err) reject(err); else resolve();
-                                });
-                            });
-                        });
-                        
-                        Promise.all(txPromises)
-                            .then(() => {
-                                db.run("COMMIT;", (err) => {
-                                    if(err) res.status(500).json({error: err.message});
-                                    else res.status(201).json({ message: "Auction recorded and transactions created successfully." });
-                                });
-                            })
-                            .catch(txErr => {
-                                db.run("ROLLBACK;");
-                                res.status(500).json({ error: "Failed to create transactions for all members.", details: txErr.message });
-                            });
-                    });
-                });
-            });
-        });
-    });
+        const txSql = `INSERT INTO transactions (user_id, amount, description, category, date) VALUES ($1, $2, $3, $4, $5)`;
+        
+        for (const member of members) {
+            let amount, category, description;
+            if (member.user_id === prized_subscriber_user_id) {
+                amount = payout_amount;
+                category = "Chit Payout to Customer";
+                description = `Payout for ${group.group_name} - Month ${auction_month}`;
+            } else {
+                amount = -net_monthly_contribution;
+                category = "Chit Installment Received from Customer";
+                description = `Installment for ${group.group_name} - Month ${auction_month}`;
+            }
+            await client.query(txSql, [member.user_id, amount, description, category, auction_date]);
+        }
+        
+        await client.query("COMMIT");
+        res.status(201).json({ message: "Auction recorded and transactions created successfully." });
+
+    } catch (err) {
+        if (client) await client.query("ROLLBACK");
+        console.error("PG CHIT AUCTION ERROR:", err.message);
+        res.status(500).json({ error: "Failed to record auction and transactions.", details: err.message });
+    } finally {
+        if (client) client.release();
+    }
 });
 
 module.exports = router;

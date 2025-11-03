@@ -1,8 +1,8 @@
 // routes/reportRoutes.js
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
-// Paste this near the top of every route file:
+const { pool } = require('../db');
+
 async function dbQuery(sql, params = []) {
     let client;
     try {
@@ -16,9 +16,8 @@ async function dbQuery(sql, params = []) {
         if (client) client.release();
     }
 }
-// --- Helper function to calculate ledger closing balances ---
-// This is the core of all financial reports
-function getLedgerClosingBalances(companyId, endDate, callback) {
+// --- Helper function to calculate ledger closing balances (Async PG version) ---
+async function getLedgerClosingBalances(companyId, endDate) {
     const sql = `
         SELECT
             l.id as ledger_id,
@@ -28,46 +27,49 @@ function getLedgerClosingBalances(companyId, endDate, callback) {
             lg.nature,
             l.opening_balance,
             l.is_dr as isOpeningDr,
-            IFNULL(SUM(ve.debit), 0) as total_debit,
-            IFNULL(SUM(ve.credit), 0) as total_credit
+            COALESCE(SUM(ve.debit), 0) as total_debit,
+            COALESCE(SUM(ve.credit), 0) as total_credit
         FROM ledgers l
         JOIN ledger_groups lg ON l.group_id = lg.id
         LEFT JOIN voucher_entries ve ON l.id = ve.ledger_id
-        LEFT JOIN vouchers v ON ve.voucher_id = v.id AND v.date <= ?
-        WHERE l.company_id = ?
-        GROUP BY l.id
+        LEFT JOIN vouchers v ON ve.voucher_id = v.id AND v.date <= $1
+        WHERE l.company_id = $2
+        GROUP BY l.id, l.name, lg.id, lg.name, lg.nature, l.opening_balance, l.is_dr
         ORDER BY lg.name, l.name
     `;
 
-    db.all(sql, [endDate, companyId], (err, rows) => {
-        if (err) return callback(err);
+    const rows = await dbQuery(sql, [endDate, companyId]);
 
-        const closingBalances = (rows || []).map(row => {
-            const opening = parseFloat(row.opening_balance) * (row.isOpeningDr ? 1 : -1); // Debit is positive
-            const netChange = parseFloat(row.total_debit) - parseFloat(row.total_credit);
-            const closing = opening + netChange;
-            return {
-                ...row,
-                closing_balance: closing
-            };
-        });
-        callback(null, closingBalances);
+    const closingBalances = (rows || []).map(row => {
+        // PG boolean is 't'/'f' or true/false, accessed directly as boolean if not using client.query
+        const isOpeningDr = row.isopeningdr === true || row.isopeningdr === 't' || row.isopeningdr === 1;
+        
+        const opening = parseFloat(row.opening_balance) * (isOpeningDr ? 1 : -1); // Debit is positive
+        const netChange = parseFloat(row.total_debit) - parseFloat(row.total_credit);
+        const closing = opening + netChange;
+        
+        return {
+            ...row,
+            isOpeningDr,
+            closing_balance: closing
+        };
     });
+    return closingBalances;
 }
 
 
 // --- Main Report Endpoints ---
 
 // GET /api/reports/trial-balance?endDate=YYYY-MM-DD
-router.get('/trial-balance', (req, res) => {
+router.get('/trial-balance', async (req, res) => {
     const companyId = req.user.active_company_id;
     const { endDate } = req.query;
 
     if (!companyId) return res.status(400).json({ error: "No active company selected." });
     if (!endDate) return res.status(400).json({ error: "End date is required." });
 
-    getLedgerClosingBalances(companyId, endDate, (err, balances) => {
-        if (err) return res.status(500).json({ error: "Failed to calculate trial balance.", details: err.message });
+    try {
+        const balances = await getLedgerClosingBalances(companyId, endDate);
         
         let totalDebit = 0;
         let totalCredit = 0;
@@ -92,36 +94,37 @@ router.get('/trial-balance', (req, res) => {
                 credit: totalCredit.toFixed(2)
             }
         });
-    });
+    } catch (err) {
+        return res.status(500).json({ error: "Failed to calculate trial balance.", details: err.message });
+    }
 });
 
 // GET /api/reports/pnl?startDate=...&endDate=...
-router.get('/pnl', (req, res) => {
+router.get('/pnl', async (req, res) => {
     const companyId = req.user.active_company_id;
     const { startDate, endDate } = req.query;
 
     if (!companyId) return res.status(400).json({ error: "No active company selected." });
     if (!startDate || !endDate) return res.status(400).json({ error: "Start date and end date are required." });
     
-    // We calculate balances for the entire period up to the end date
-    // Then we filter based on the nature for P&L
+    // Converted to PG syntax (COALESCE, $1, $2, $3 placeholders)
     const sql = `
         SELECT
             l.name as ledger_name,
             lg.name as group_name,
             lg.nature,
-            IFNULL(SUM(ve.debit), 0) - IFNULL(SUM(ve.credit), 0) as net_change
+            COALESCE(SUM(ve.debit), 0) - COALESCE(SUM(ve.credit), 0) as net_change
         FROM ledgers l
         JOIN ledger_groups lg ON l.group_id = lg.id
         LEFT JOIN voucher_entries ve ON l.id = ve.ledger_id
-        LEFT JOIN vouchers v ON ve.voucher_id = v.id AND v.date BETWEEN ? AND ?
-        WHERE l.company_id = ? AND lg.nature IN ('Income', 'Expense')
-        GROUP BY l.id
-        HAVING net_change != 0
+        LEFT JOIN vouchers v ON ve.voucher_id = v.id AND v.date BETWEEN $1 AND $2
+        WHERE l.company_id = $3 AND lg.nature IN ('Income', 'Expense')
+        GROUP BY l.id, l.name, lg.name, lg.nature
+        HAVING COALESCE(SUM(ve.debit), 0) - COALESCE(SUM(ve.credit), 0) != 0
     `;
 
-    db.all(sql, [startDate, endDate, companyId], (err, rows) => {
-        if (err) return res.status(500).json({ error: "Failed to generate P&L statement.", details: err.message });
+    try {
+        const rows = await dbQuery(sql, [startDate, endDate, companyId]);
         
         let totalIncome = 0;
         let totalExpense = 0;
@@ -149,80 +152,81 @@ router.get('/pnl', (req, res) => {
             expense: { items: expenseItems, total: totalExpense.toFixed(2) },
             netProfit: { amount: netProfit.toFixed(2), status: netProfit >= 0 ? 'Profit' : 'Loss' }
         });
-    });
+    } catch (err) {
+        return res.status(500).json({ error: "Failed to generate P&L statement.", details: err.message });
+    }
 });
 
 // GET /api/reports/balance-sheet?endDate=...
-router.get('/balance-sheet', (req, res) => {
+router.get('/balance-sheet', async (req, res) => {
     const companyId = req.user.active_company_id;
     const { endDate } = req.query;
 
     if (!companyId) return res.status(400).json({ error: "No active company selected." });
     if (!endDate) return res.status(400).json({ error: "End date is required." });
 
-    // Step 1: Get closing balances for all ledgers
-    getLedgerClosingBalances(companyId, endDate, (err, balances) => {
-        if (err) return res.status(500).json({ error: "Failed to generate balance sheet (step 1).", details: err.message });
+    try {
+        // Step 1: Get closing balances for all ledgers
+        const balances = await getLedgerClosingBalances(companyId, endDate);
 
-        // Step 2: Calculate Profit/Loss for the period (from financial year start to endDate)
-        // This is a simplified P&L calculation for the balance sheet.
+        // Step 2: Calculate Profit/Loss for the period (simplified P&L)
         const pnlSql = `
             SELECT
                 lg.nature,
-                IFNULL(SUM(ve.debit), 0) - IFNULL(SUM(ve.credit), 0) as net_change
+                COALESCE(SUM(ve.debit), 0) - COALESCE(SUM(ve.credit), 0) as net_change
             FROM ledgers l
             JOIN ledger_groups lg ON l.group_id = lg.id
             LEFT JOIN voucher_entries ve ON l.id = ve.ledger_id
-            LEFT JOIN vouchers v ON ve.voucher_id = v.id AND v.date <= ? 
-            WHERE l.company_id = ? AND lg.nature IN ('Income', 'Expense')
+            LEFT JOIN vouchers v ON ve.voucher_id = v.id AND v.date <= $1 
+            WHERE l.company_id = $2 AND lg.nature IN ('Income', 'Expense')
             GROUP BY lg.nature
         `;
-        db.all(pnlSql, [endDate, companyId], (pnlErr, pnlRows) => {
-            if (pnlErr) return res.status(500).json({ error: "Failed to generate balance sheet (step 2).", details: pnlErr.message });
-            
-            let totalIncome = 0;
-            let totalExpense = 0;
-            (pnlRows || []).forEach(row => {
-                if(row.nature === 'Income') totalIncome = -parseFloat(row.net_change);
-                if(row.nature === 'Expense') totalExpense = parseFloat(row.net_change);
-            });
-            const netProfit = totalIncome - totalExpense;
-
-            // Step 3: Assemble the Balance Sheet
-            let totalAssets = 0;
-            let totalLiabilities = 0;
-            const assetItems = [];
-            const liabilityItems = [];
-
-            balances.forEach(item => {
-                if (item.nature === 'Asset') {
-                    const balance = item.closing_balance;
-                    if (Math.abs(balance) > 0.001) {
-                        totalAssets += balance;
-                        assetItems.push({ name: item.ledger_name, amount: balance.toFixed(2) });
-                    }
-                } else if (item.nature === 'Liability') {
-                    const balance = -item.closing_balance; // Liabilities have credit balances
-                    if (Math.abs(balance) > 0.001) {
-                        totalLiabilities += balance;
-                        liabilityItems.push({ name: item.ledger_name, amount: balance.toFixed(2) });
-                    }
-                }
-            });
-
-            // Add P&L to liabilities side
-            liabilityItems.push({ name: 'Profit & Loss A/c', amount: netProfit.toFixed(2) });
-            totalLiabilities += netProfit;
-
-            res.json({
-                assets: { items: assetItems, total: totalAssets.toFixed(2) },
-                liabilities: { items: liabilityItems, total: totalLiabilities.toFixed(2) }
-            });
+        const pnlRows = await dbQuery(pnlSql, [endDate, companyId]);
+        
+        let totalIncome = 0;
+        let totalExpense = 0;
+        (pnlRows || []).forEach(row => {
+            if(row.nature === 'Income') totalIncome = -parseFloat(row.net_change);
+            if(row.nature === 'Expense') totalExpense = parseFloat(row.net_change);
         });
-    });
+        const netProfit = totalIncome - totalExpense;
+
+        // Step 3: Assemble the Balance Sheet
+        let totalAssets = 0;
+        let totalLiabilities = 0;
+        const assetItems = [];
+        const liabilityItems = [];
+
+        balances.forEach(item => {
+            if (item.nature === 'Asset') {
+                const balance = item.closing_balance;
+                if (Math.abs(balance) > 0.001) {
+                    totalAssets += balance;
+                    assetItems.push({ name: item.ledger_name, amount: balance.toFixed(2) });
+                }
+            } else if (item.nature === 'Liability') {
+                const balance = -item.closing_balance; // Liabilities have credit balances
+                if (Math.abs(balance) > 0.001) {
+                    totalLiabilities += balance;
+                    liabilityItems.push({ name: item.ledger_name, amount: balance.toFixed(2) });
+                }
+            }
+        });
+
+        // Add P&L to liabilities side
+        liabilityItems.push({ name: 'Profit & Loss A/c', amount: netProfit.toFixed(2) });
+        totalLiabilities += netProfit;
+
+        res.json({
+            assets: { items: assetItems, total: totalAssets.toFixed(2) },
+            liabilities: { items: liabilityItems, total: totalLiabilities.toFixed(2) }
+        });
+    } catch (err) {
+        return res.status(500).json({ error: "Failed to generate balance sheet.", details: err.message });
+    }
 });
 
-// POST /api/reports/export - Generic export to CSV
+// POST /api/reports/export - Generic export to CSV (JS Only)
 router.post('/export', async (req, res) => {
     const { reportType, data, totals } = req.body;
     if (!reportType || !data) {

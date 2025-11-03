@@ -1,8 +1,8 @@
 // services/googleSheetService.js
 const { GoogleSpreadsheet } = require('google-spreadsheet');
-const { JWT } = require('google-auth-library'); // Import JWT for authentication
+const { JWT } = require('google-auth-library'); 
 const path = require('path');
-const db = require('../db');
+const { pool } = require('../db'); // <-- PG FIX: Import pool
 
 // --- Configuration ---
 const SPREADSHEET_ID = '1mYY3uByHqRbYpekrwZJzk3bqVpZtsAEfk99u1fKnt10';
@@ -11,21 +11,34 @@ const LOAN_SHEET_NAMES = ['Bajaj', 'Hero', 'Protium'];
 const PARTY_SHEET_NAMES = ['Chandhan', 'Shiva Adass(Sunshine)', 'JAMES', 'MS', 'DEEPAK DELHI', 'waves'];
 const IGNORED_SHEET_NAMES = ['Sheet1'];
 
-let doc; // Will be initialized after auth
+let doc; 
 let isAuthLoaded = false;
 
 // --- Helper Functions ---
+async function dbQuery(sql, params = []) {
+    let client;
+    try {
+        client = await pool.connect();
+        const result = await client.query(sql, params);
+        return result.rows;
+    } catch (e) {
+        console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+        throw e;
+    } finally {
+        if (client) client.release();
+    }
+}
+
 async function loadCredentialsAndAuth() {
     if (isAuthLoaded) return;
     try {
         const creds = require(CREDENTIALS_PATH);
 
-        // --- FIX: Correctly format the private key to handle potential line break issues ---
         const formattedKey = creds.private_key.replace(/\\n/g, '\n');
 
         const serviceAccountAuth = new JWT({
             email: creds.client_email,
-            key: formattedKey, // Use the formatted key
+            key: formattedKey, 
             scopes: [
                 'https://www.googleapis.com/auth/spreadsheets',
             ],
@@ -42,40 +55,62 @@ async function loadCredentialsAndAuth() {
 }
 
 
-const findOrCreateEntity = (name, type, companyId) => new Promise((resolve, reject) => {
-    db.get('SELECT id FROM lenders WHERE name = ? AND company_id = ?', [name, companyId], (err, row) => {
-        if (err) return reject(err);
-        if (row) return resolve(row.id);
-        db.run('INSERT INTO lenders (name, entity_type, company_id) VALUES (?, ?, ?)', [name, type, companyId], function (err) {
-            if (err) return reject(err);
-            resolve(this.lastID);
-        });
-    });
-});
+const findOrCreateEntity = async (name, type, companyId) => {
+    // PG FIX: Use dbQuery
+    const checkSql = 'SELECT id FROM lenders WHERE lender_name = $1 AND company_id = $2';
+    const existing = await dbQuery(checkSql, [name, companyId]);
 
-const findOrCreateParty = (name, companyId) => new Promise((resolve, reject) => {
-    db.get("SELECT id FROM users WHERE username = ? AND active_company_id = ?", [name, companyId], (err, row) => {
-        if (err) return reject(err);
-        if (row) return resolve(row.id);
+    if (existing.length > 0) return existing[0].id;
+    
+    const insertSql = 'INSERT INTO lenders (lender_name, entity_type, company_id) VALUES ($1, $2, $3) RETURNING id';
+    const result = await dbQuery(insertSql, [name, type, companyId]);
+    return result[0].id;
+};
+
+const findOrCreateParty = async (name, companyId) => {
+    let client;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+
+        // 1. Find or Create User
+        const userCheck = await client.query("SELECT id FROM users WHERE username = $1 AND active_company_id = $2", [name, companyId]);
         
-        const userSql = `INSERT INTO users (username, role, active_company_id) VALUES (?, ?, ?)`;
-        db.run(userSql, [name, 'user', companyId], function (userErr) {
-            if (userErr) return reject(userErr);
-            const newUserId = this.lastID;
-            db.run(`INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)`, [newUserId, companyId], (linkErr) => {
-                if(linkErr) return reject(linkErr);
+        let newUserId;
+        if (userCheck.rows.length > 0) {
+            newUserId = userCheck.rows[0].id;
+        } else {
+            const userSql = `INSERT INTO users (username, role, active_company_id) VALUES ($1, $2, $3) RETURNING id`;
+            const userResult = await client.query(userSql, [name, 'user', companyId]);
+            newUserId = userResult.rows[0].id;
 
-                db.get("SELECT id FROM ledger_groups WHERE company_id = ? AND name = 'Sundry Debtors'", [companyId], (groupErr, groupRow) => {
-                    if(groupErr || !groupRow) return reject(new Error('Sundry Debtors group not found for company ' + companyId));
-                    db.run('INSERT INTO ledgers (company_id, name, group_id) VALUES (?, ?, ?)', [companyId, name, groupRow.id], (ledgerErr) => {
-                        if (ledgerErr) return reject(ledgerErr);
-                        resolve(newUserId);
-                    });
-                });
-            });
-        });
-    });
-});
+            // Link to company
+            await client.query(`INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)`, [newUserId, companyId]);
+        }
+
+        // 2. Find Sundry Debtors Group ID
+        const groupResult = await client.query("SELECT id FROM ledger_groups WHERE company_id = $1 AND name = 'Sundry Debtors'", [companyId]);
+        const groupRow = groupResult.rows[0];
+        
+        if (!groupRow) {
+            await client.query('ROLLBACK');
+            throw new Error('Sundry Debtors group not found for company ' + companyId);
+        }
+
+        // 3. Create Ledger (using ON CONFLICT DO NOTHING to ensure idempotency)
+        const ledgerSql = 'INSERT INTO ledgers (company_id, name, group_id) VALUES ($1, $2, $3) ON CONFLICT (company_id, name) DO NOTHING';
+        await client.query(ledgerSql, [companyId, name, groupRow.id]);
+        
+        await client.query('COMMIT');
+        return newUserId;
+        
+    } catch (err) {
+        if (client) await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        if (client) client.release();
+    }
+};
 
 const processLoanSheet = async (sheet, companyId) => {
     const lenderName = sheet.title;
@@ -89,49 +124,56 @@ const processLoanSheet = async (sheet, companyId) => {
 
     const lenderId = await findOrCreateEntity(lenderName, 'Financial', companyId);
 
-    const agreementExists = await new Promise((resolve, reject) => {
-        db.get("SELECT id FROM business_agreements WHERE lender_id = ? AND details LIKE ? AND company_id = ?", [lenderId, `%Imported from sheet: ${lenderName}%`, companyId], (err, row) => {
-            if (err) reject(err); else resolve(row);
-        });
-    });
+    const agreementExists = await dbQuery("SELECT id FROM business_agreements WHERE lender_id = $1 AND details LIKE $2 AND company_id = $3", 
+        [lenderId, `%Imported from sheet: ${lenderName}%`, companyId]);
 
-    if (agreementExists) {
+    if (agreementExists.length > 0) {
         return { status: 'skipped', reason: 'Loan agreement already exists in DB.' };
     }
+    
+    let client;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN');
 
-    const agreementData = {
-        company_id: companyId,
-        lender_id: lenderId,
-        agreement_type: 'loan_taken_by_biz',
-        total_amount: remainingBalance,
-        start_date: new Date().toISOString().split('T')[0],
-        details: `Imported from sheet: ${lenderName}. Original remaining months: ${months || 'N/A'}`
-    };
+        // 1. Insert Agreement
+        const agreementData = {
+            company_id: companyId,
+            lender_id: lenderId,
+            agreement_type: 'loan_taken_by_biz',
+            total_amount: remainingBalance,
+            start_date: new Date().toISOString().split('T')[0],
+            details: `Imported from sheet: ${lenderName}. Original remaining months: ${months || 'N/A'}`
+        };
+        const agreementSql = 'INSERT INTO business_agreements (company_id, lender_id, agreement_type, total_amount, start_date, details) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id';
+        const agreementResult = await client.query(agreementSql, Object.values(agreementData));
+        const agreementId = agreementResult.rows[0].id;
 
-    const agreementId = await new Promise((resolve, reject) => {
-        const sql = 'INSERT INTO business_agreements (company_id, lender_id, agreement_type, total_amount, start_date, details) VALUES (?, ?, ?, ?, ?, ?)';
-        db.run(sql, Object.values(agreementData), function(err) {
-            if(err) reject(err); else resolve(this.lastID);
-        });
-    });
+        // 2. Insert Transaction
+        const txData = {
+            company_id: companyId,
+            user_id: null,
+            lender_id: lenderId,
+            agreement_id: agreementId,
+            amount: remainingBalance,
+            description: `Onboarding existing loan from ${lenderName}`,
+            category: 'Loan Received by Business (to Bank)',
+            date: new Date().toISOString().split('T')[0],
+            related_invoice_id: null
+        };
+        const txSql = 'INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)';
+        await client.query(txSql, Object.values(txData));
+        
+        await client.query('COMMIT');
 
-    const txData = {
-        company_id: companyId,
-        user_id: null,
-        lender_id: lenderId,
-        agreement_id: agreementId,
-        amount: remainingBalance,
-        description: `Onboarding existing loan from ${lenderName}`,
-        category: 'Loan Received by Business (to Bank)',
-        date: new Date().toISOString().split('T')[0],
-        related_invoice_id: null
-    };
-    await new Promise((resolve, reject) => {
-        const sql = 'INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) VALUES (?,?,?,?,?,?,?,?,?)';
-        db.run(sql, Object.values(txData), err => { if(err) reject(err); else resolve(); });
-    });
-
-    return { status: 'imported', type: 'Loan', amount: remainingBalance };
+        return { status: 'imported', type: 'Loan', amount: remainingBalance };
+        
+    } catch (error) {
+        if (client) await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        if (client) client.release();
+    }
 };
 
 const processPartySheet = async (sheet, companyId) => {
@@ -155,15 +197,13 @@ const processPartySheet = async (sheet, companyId) => {
         return { status: 'skipped', reason: 'No valid pending balance found.' };
     }
     
-    const partyId = await findOrCreateParty(partyName, companyId);
+    // This function handles its own transaction
+    const partyId = await findOrCreateParty(partyName, companyId); 
     
-    const balanceTxExists = await new Promise((resolve, reject) => {
-        db.get("SELECT id FROM transactions WHERE user_id = ? AND category = 'Opening Balance Adjustment' AND company_id = ?", [partyId, companyId], (err, row) => {
-            if(err) reject(err); else resolve(row);
-        });
-    });
+    // Check if opening balance adjustment already exists
+    const balanceTxExists = await dbQuery("SELECT id FROM transactions WHERE user_id = $1 AND category = 'Opening Balance Adjustment' AND company_id = $2", [partyId, companyId]);
 
-    if (balanceTxExists) {
+    if (balanceTxExists.length > 0) {
         return { status: 'skipped', reason: 'Opening balance already exists for this party.' };
     }
 
@@ -178,18 +218,18 @@ const processPartySheet = async (sheet, companyId) => {
         date: new Date().toISOString().split('T')[0],
         related_invoice_id: null,
     };
-     await new Promise((resolve, reject) => {
-        const sql = 'INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) VALUES (?,?,?,?,?,?,?,?,?)';
-        db.run(sql, Object.values(txData), err => { if(err) reject(err); else resolve(); });
-    });
+    
+    const txSql = 'INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)';
+    await dbQuery(txSql, Object.values(txData));
 
     return { status: 'imported', type: 'Party Balance', amount: finalPending };
 };
 
 // --- Main Exported Function ---
 const importAllSheetsData = async (companyId) => {
-    await loadCredentialsAndAuth(); // Use the new auth function
-    await doc.loadInfo(); // This is the first interaction with the sheet, authenticates here.
+    // ... (rest of main function logic remains the same, relying on helper functions)
+    await loadCredentialsAndAuth(); 
+    await doc.loadInfo(); 
     const sheets = doc.sheetsByIndex;
     const summary = {
         processed: 0,
@@ -211,7 +251,7 @@ const importAllSheetsData = async (companyId) => {
             try {
                 if (LOAN_SHEET_NAMES.includes(title)) {
                     result = await processLoanSheet(sheet, companyId);
-                } else if (PARTY_SHEET_NAMES.includes(title)) { // Use the party sheet list
+                } else if (PARTY_SHEET_NAMES.includes(title)) { 
                     result = await processPartySheet(sheet, companyId);
                 } else {
                     result = { status: 'skipped', reason: 'Sheet name not categorized for import.' };
