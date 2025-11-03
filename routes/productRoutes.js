@@ -8,7 +8,6 @@ async function dbQuery(sql, params = []) {
     try {
         client = await pool.connect();
         const result = await client.query(sql, params);
-        // Ensure rowCount is attached to rows for consistency in UPDATE/DELETE checks
         const rows = result.rows;
         rows.rowCount = result.rowCount; 
         return rows;
@@ -46,10 +45,9 @@ router.get('/', async (req, res) => {
 
     if (!companyId) return res.status(400).json({ error: "No active company selected for the user." });
     
-    // FIX 1: Use boolean literal TRUE for PG
+    // FIX: Use boolean literal TRUE for PG
     const activeFilter = !showInactive ? 'AND p.is_active = TRUE' : '';
     
-    // FIX 2 & 3: Use boolean literal TRUE in subqueries and STRING_AGG for concatenation
     const sql = `
         SELECT
             p.*,

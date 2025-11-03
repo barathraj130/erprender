@@ -73,7 +73,6 @@ router.get('/items', async (req, res) => {
     const companyId = req.user.active_company_id;
     if (!companyId) return res.status(400).json({ error: "No active company selected." });
 
-    // Note: COALESCE is the PG equivalent of IFNULL
     const sql = `
         SELECT i.*, u.name as unit_name,
         (i.opening_qty + COALESCE((SELECT SUM(vi.quantity) FROM voucher_inventory_entries vi WHERE vi.item_id = i.id), 0)) as current_stock
