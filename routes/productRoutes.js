@@ -18,29 +18,21 @@ async function dbQuery(sql, params = []) {
 }
 // Helper function to convert JSON data to a CSV string (JS only)
 function convertToCsv(data, headers) {
-    // ... (unchanged JS function)
-    if (!Array.isArray(data) || data.length === 0) {
-        return '';
-    }
-
+    if (!Array.isArray(data) || data.length === 0) { return ''; }
     const sanitizeValue = (value) => {
-        if (value === null || value === undefined) {
-            return '';
-        }
+        if (value === null || value === undefined) { return ''; }
         const strValue = String(value);
         if (strValue.includes(',') || strValue.includes('\n') || strValue.includes('"')) {
             return `"${strValue.replace(/"/g, '""')}"`;
         }
         return strValue;
     };
-
     const headerRow = headers.map(h => sanitizeValue(h.label)).join(',');
     const dataRows = data.map(row => {
         return headers.map(header => {
             return sanitizeValue(row[header.key]);
         }).join(',');
     });
-
     return [headerRow, ...dataRows].join('\n');
 }
 
@@ -49,22 +41,22 @@ router.get('/', async (req, res) => {
     const companyId = req.user.active_company_id;
     const showInactive = req.query.include_inactive === 'true'; 
 
-    if (!companyId) {
-        return res.status(400).json({ error: "No active company selected for the user." });
-    }
+    if (!companyId) return res.status(400).json({ error: "No active company selected for the user." });
     
+    // FIX 1: Use boolean literal TRUE for PG
     const activeFilter = !showInactive ? 'AND p.is_active = TRUE' : '';
     
-    // Converted to PG syntax, using COALESCE and standard subqueries
     const sql = `
         SELECT
             p.*,
             (SELECT l.lender_name 
              FROM product_suppliers ps_pref 
              JOIN lenders l ON ps_pref.supplier_id = l.id 
+             -- FIX 2: Use boolean literal TRUE for PG
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = TRUE LIMIT 1) as preferred_supplier_name,
             (SELECT ps_pref.purchase_price 
              FROM product_suppliers ps_pref 
+             -- FIX 3: Use boolean literal TRUE for PG
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = TRUE LIMIT 1) as preferred_supplier_purchase_price
         FROM products p
         WHERE p.company_id = $1 ${activeFilter}
@@ -89,9 +81,7 @@ router.get('/:id', async (req, res) => {
         const productRows = await dbQuery('SELECT * FROM products WHERE id = $1 AND company_id = $2', [productId, companyId]);
         const productData = productRows[0];
         
-        if (!productData) {
-            return res.status(404).json({ error: "Product not found." });
-        }
+        if (!productData) return res.status(404).json({ error: "Product not found." });
 
         const suppliersSql = `
             SELECT 
@@ -108,6 +98,7 @@ router.get('/:id', async (req, res) => {
             WHERE ps.product_id = $1 AND l.entity_type = 'Supplier'
             ORDER BY ps.is_preferred DESC, l.lender_name ASC
         `;
+        // Note: is_preferred column in this SELECT is used for ordering, but PG handles boolean comparison in ORDER BY correctly.
         const supplierRows = await dbQuery(suppliersSql, [productId]);
         
         productData.suppliers = supplierRows || [];
@@ -123,8 +114,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
     const companyId = req.user.active_company_id;
     const { 
-        product_name, sku, description, cost_price,
-        sale_price, current_stock, 
+        product_name, sku, description, cost_price, sale_price, current_stock, 
         unit_of_measure, low_stock_threshold, hsn_acs_code, reorder_level 
     } = req.body;
 
@@ -232,24 +222,20 @@ router.delete('/:id', async (req, res) => {
     if (!companyId) return res.status(400).json({ error: "Could not identify the company for this operation." });
 
     try {
-        // 1. Check Usage (In PG, COUNT returns a string/bigint, so parse it)
+        // 1. Check Usage 
         const checkTxSql = 'SELECT COUNT(*) as count FROM transaction_line_items WHERE product_id = $1';
         const checkInvSql = 'SELECT COUNT(*) as count FROM invoice_line_items WHERE product_id = $1';
         
         const txCount = await dbQuery(checkTxSql, [id]).then(rows => parseInt(rows[0].count, 10));
         const invCount = await dbQuery(checkInvSql, [id]).then(rows => parseInt(rows[0].count, 10));
 
-        if (txCount > 0) {
-            return res.status(400).json({ error: "Cannot delete product. It is used in existing financial transactions. Consider deactivating it instead." });
-        }
-        if (invCount > 0) {
-            return res.status(400).json({ error: "Cannot delete product. It is used in existing invoices. Consider deactivating it or removing it from invoices first." });
-        }
+        if (txCount > 0) return res.status(400).json({ error: "Cannot delete product. It is used in existing financial transactions. Consider deactivating it instead." });
+        if (invCount > 0) return res.status(400).json({ error: "Cannot delete product. It is used in existing invoices. Consider deactivating it or removing it from invoices first." });
             
         client = await pool.connect();
         await client.query("BEGIN");
         
-        // 2. Delete product links (CASCADE handled automatically by schema, but safer to manually delete)
+        // 2. Delete product links 
         await client.query('DELETE FROM product_suppliers WHERE product_id = $1', [id]);
 
         // 3. Delete Product
@@ -281,9 +267,7 @@ router.put('/:id/deactivate', async (req, res) => {
     const sql = `UPDATE products SET is_active = FALSE, updated_at = NOW() WHERE id = $1 AND company_id = $2`;
     try {
         const result = await dbQuery(sql, [id, companyId]);
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: "Product not found or no permission." });
-        }
+        if (result.rowCount === 0) return res.status(404).json({ error: "Product not found or no permission." });
         res.json({ message: "Product deactivated successfully." });
     } catch (err) {
         return res.status(500).json({ error: "Failed to deactivate product." });
@@ -299,9 +283,7 @@ router.put('/:id/reactivate', async (req, res) => {
     const sql = `UPDATE products SET is_active = TRUE, updated_at = NOW() WHERE id = $1 AND company_id = $2`;
     try {
         const result = await dbQuery(sql, [id, companyId]);
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: "Product not found or no permission." });
-        }
+        if (result.rowCount === 0) return res.status(404).json({ error: "Product not found or no permission." });
         res.json({ message: "Product reactivated successfully." });
     } catch (err) {
         return res.status(500).json({ error: "Failed to reactivate product." });
@@ -309,10 +291,49 @@ router.put('/:id/reactivate', async (req, res) => {
 });
 
 
-// EXPORT ROUTE - Uses legacy functions for GROUP_CONCAT, requires further PG adjustment
+// EXPORT ROUTE
 router.get('/export', async (req, res) => {
-    return res.status(501).json({ error: "Product Export (CSV) not yet migrated to PostgreSQL syntax (GROUP_CONCAT is non-standard)." });
-    // In PG, this would require: string_agg(l.lender_name, '; ')
+    const companyId = req.user.active_company_id;
+    if (!companyId) return res.status(400).json({ error: "Company not identified for export." });
+
+    // PG SQL using string_agg
+    const sql = `
+        SELECT 
+            p.id, p.product_name, p.sku, p.description, p.cost_price, p.sale_price, p.current_stock, 
+            p.unit_of_measure, p.hsn_acs_code, p.low_stock_threshold, p.reorder_level,
+            STRING_AGG(l.lender_name, '; ') as suppliers
+        FROM products p 
+        LEFT JOIN product_suppliers ps ON ps.product_id = p.id
+        LEFT JOIN lenders l ON ps.supplier_id = l.id
+        WHERE p.company_id = $1
+        GROUP BY p.id
+        ORDER BY p.id DESC
+    `;
+    
+    try {
+        const rows = await dbQuery(sql, [companyId]);
+
+        const headers = [
+            { key: 'id', label: 'Product ID' },
+            { key: 'product_name', label: 'Product Name' },
+            { key: 'sku', label: 'SKU' },
+            { key: 'description', label: 'Description' },
+            { key: 'cost_price', label: 'Cost Price' },
+            { key: 'sale_price', label: 'Sale Price' },
+            { key: 'current_stock', label: 'Current Stock' },
+            { key: 'unit_of_measure', label: 'Unit' },
+            { key: 'hsn_acs_code', label: 'HSN/ACS Code' },
+            { key: 'low_stock_threshold', label: 'Low Stock Threshold' },
+            { key: 'suppliers', label: 'Linked Suppliers' }
+        ];
+
+        const csv = convertToCsv(rows, headers);
+        res.header('Content-Type', 'text/csv');
+        res.attachment('products_export.csv');
+        res.send(csv);
+    } catch (err) {
+        return res.status(500).json({ error: "Failed to fetch product data for export.", details: err.message });
+    }
 });
 
 module.exports = router;
