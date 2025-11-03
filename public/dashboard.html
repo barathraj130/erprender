@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>ERP Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar open">
+    <div class="sidebar-header">
+      <h2>ERP</h2>
+      <button id="sidebarCloseBtn" class="close-btn">×</button>
+    </div>
+    <nav class="sidebar-nav">
+        <div class="nav-item active" data-section="dashboardAnalytics"><i class="fas fa-chart-line"></i> Dashboard</div>
+        <div class="nav-item" data-section="customerManagementSection"><i class="fas fa-users"></i> Customers <span id="navCustomerCount" class="nav-count">0</span></div>
+        <div class="nav-item" data-section="supplierManagementSection"><i class="fas fa-truck"></i> Suppliers <span id="navSupplierCount" class="nav-count">0</span></div>
+        <div class="nav-item" data-section="inventoryManagementSection"><i class="fas fa-boxes"></i> Inventory <span id="navInventoryCount" class="nav-count">0</span></div>
+        <div class="nav-item" data-section="invoiceManagementSection"><i class="fas fa-file-invoice"></i> Invoices <span id="navInvoiceCount" class="nav-count">0</span></div>
+        <div class="nav-item" data-section="allTransactionsSection"><i class="fas fa-exchange-alt"></i> Transactions</div>
+        <div class="nav-item" data-section="ledgersSection"><i class="fas fa-book"></i> Ledgers</div>
+        <div class="nav-item" data-section="businessFinanceSection"><i class="fas fa-university"></i> Business Finance</div>
+        <div class="nav-item" data-section="reportsSection"><i class="fas fa-chart-pie"></i> Reports</div>
+        <div class="nav-item" data-section="companySection"><i class="fas fa-building"></i> Company</div>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <div class="main-content-wrapper">
+    <header class="main-header">
+        <div class="header-left">
+            <button id="menuToggle"><i class="fas fa-bars"></i></button>
+            <h1 id="mainHeaderText">Dashboard</h1>
+        </div>
+        <div class="header-center">
+             <div class="global-search-container">
+                <i class="fas fa-search"></i>
+                <input type="text" id="globalSearchInput" placeholder="Search Invoices, Products, Customers...">
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="header-actions">
+                <div class="add-new-container">
+                    <button id="headerAddButton" class="btn btn-primary"><i class="fas fa-plus"></i> Add New</button>
+                    <div id="addNewDropdown" class="dropdown-content">
+                        <a href="#" onclick="openInvoiceModal(); closeAddNewDropdown();"><i class="fas fa-file-invoice"></i> New Invoice</a>
+                        <a href="#" onclick="openTransactionModal(null, null, true); closeAddNewDropdown();"><i class="fas fa-exchange-alt"></i> New Transaction</a>
+                        <a href="#" onclick="openProductModal(); closeAddNewDropdown();"><i class="fas fa-box"></i> New Product</a>
+                        <a href="#" onclick="openUserModal(); closeAddNewDropdown();"><i class="fas fa-user-plus"></i> New Customer</a>
+                        <a href="#" onclick="openLenderModal(null, 'Supplier'); closeAddNewDropdown();"><i class="fas fa-truck"></i> New Supplier</a>
+                    </div>
+                </div>
+                <div class="notification-container">
+                    <button id="notificationBell"><i class="fas fa-bell"></i><span id="notificationCount" class="notification-count-badge" style="display:none;">0</span></button>
+                     <div id="notificationDropdown" class="dropdown-content">
+                        <div class="notification-header">Notifications</div>
+                        <div id="notificationList">
+                            <div class="notification-item-placeholder">No new notifications</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="user-profile">
+                <span class="user-name">...</span>
+                <span class="user-role">...</span>
+                <button onclick="logout()" title="Logout" class="btn-logout"><i class="fas fa-sign-out-alt"></i></button>
+            </div>
+        </div>
+    </header>
+
+    <main class="content-area">
+        <div id="globalSearchResults" style="display:none;">
+            <h3>Search Results</h3>
+            <div class="table-container">
+                <table id="globalSearchResultsTable" class="data-table">
+                    <thead></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Dashboard Section -->
+        <section id="dashboardAnalytics" class="app-section">
+            <div class="dashboard-header">
+                <select id="dashboardPeriod" onchange="updateDashboardPeriod()" class="form-control" style="width: auto;">
+                    <option value="this_month">This Month</option>
+                    <option value="last_month">Last Month</option>
+                    <option value="this_quarter">This Quarter</option>
+                    <option value="this_year">This Year</option>
+                </select>
+                <div class="chart-controls">
+                    <button class="chart-time-btn active" data-period="daily">Daily</button>
+                    <button class="chart-time-btn" data-period="weekly">Weekly</button>
+                    <button class="chart-time-btn" data-period="monthly">Monthly</button>
+                </div>
+            </div>
+            <div class="kpi-cards">
+                <div class="kpi-card">
+                    <div class="kpi-icon" style="background-color: #e6f1ff;"><i class="fas fa-dollar-sign" style="color:#4A69E2;"></i></div>
+                    <div class="kpi-content">
+                        <h3>Revenue</h3>
+                        <p id="monthlyRevenue">₹0.00</p>
+                        <span id="revenueChange" class="kpi-change positive">+0.0%</span>
+                    </div>
+                </div>
+                <div class="kpi-card">
+                     <div class="kpi-icon" style="background-color: #e6fcf5;"><i class="fas fa-users" style="color:#28a745;"></i></div>
+                    <div class="kpi-content">
+                        <h3>Customers</h3>
+                        <p id="totalCustomers">0</p>
+                        <span id="customersChange" class="kpi-change positive">+0 new</span>
+                    </div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-icon" style="background-color: #fff6e6;"><i class="fas fa-receipt" style="color:#f59e0b;"></i></div>
+                    <div class="kpi-content">
+                        <h3>Pending Invoices</h3>
+                        <p id="pendingInvoices">0</p>
+                        <span id="pendingAmount" class="kpi-change negative">₹0.00</span>
+                    </div>
+                </div>
+                 <div class="kpi-card">
+                    <div class="kpi-icon" style="background-color: #ffeeed;"><i class="fas fa-exclamation-triangle" style="color:#dc3545;"></i></div>
+                    <div class="kpi-content">
+                        <h3>Inventory Alerts</h3>
+                        <p id="totalProducts">0 Products</p>
+                        <span id="lowStockAlert" class="kpi-change" onclick="showLowStockProducts()" style="cursor:pointer; text-decoration: underline;">0 low stock</span>
+                    </div>
+                </div>
+            </div>
+            <div class="dashboard-grid">
+                <div class="chart-container large-chart">
+                    <h3>Revenue Trend</h3>
+                    <canvas id="revenueChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Top Selling Products</h3>
+                    <canvas id="categoryChart"></canvas>
+                    <div id="topSellingPlaceholder" class="chart-placeholder">No sales data for this period.</div>
+                </div>
+                <div class="activity-feed">
+                     <h3>Recent Activity</h3>
+                     <button onclick="refreshRecentActivity()" class="btn-refresh"><i class="fas fa-sync-alt"></i></button>
+                     <div id="recentActivityList">
+                         <div class="activity-item-placeholder">Loading activity...</div>
+                     </div>
+                </div>
+                <div class="today-snapshot">
+                    <h3>Today's Snapshot</h3>
+                    <div class="snapshot-item">
+                        <span>Revenue</span>
+                        <strong id="todayRevenue">₹0.00</strong>
+                    </div>
+                     <div class="snapshot-item">
+                        <span>Orders</span>
+                        <strong id="todayOrders">0</strong>
+                    </div>
+                     <div class="snapshot-item">
+                        <span>Avg. Order Value</span>
+                        <strong id="todayAvgOrder">₹0.00</strong>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Customer Management Section -->
+        <section id="customerManagementSection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>Customer Management</h2>
+                <button class="btn btn-primary" onclick="openUserModal()"><i class="fas fa-plus"></i> Add New Customer</button>
+            </div>
+            <div class="table-container">
+                <table id="customerTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Name</th>
+                            <th class="num">Opening Balance (₹)</th>
+                            <th class="num">Receivable (₹)</th>
+                            <th class="num">Loan Outstanding (₹)</th>
+                            <th class="num">Chit Position (₹)</th>
+                            <th>Joined On</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="customerTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+    
+        <!-- Supplier Management Section -->
+        <section id="supplierManagementSection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>Supplier Management</h2>
+                <button class="btn btn-primary" onclick="openLenderModal(null, 'Supplier')"><i class="fas fa-plus"></i> Add New Supplier</button>
+            </div>
+            <div class="table-container">
+                <table id="supplierTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Supplier Name</th>
+                            <th>Contact Person</th>
+                            <th class="num">Payable (₹)</th>
+                            <th>Notes</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="supplierTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+    
+        <!-- Inventory Management Section -->
+        <section id="inventoryManagementSection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>Inventory Management</h2>
+                <button class="btn btn-primary" onclick="openProductModal()"><i class="fas fa-plus"></i> Add New Product</button>
+            </div>
+            <div class="table-container">
+                <table id="productTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Product Name</th>
+                            <th>SKU</th>
+                            <th>Preferred Supplier</th>
+                            <th class="num">Pref. Purchase Price (₹)</th>
+                            <th class="num">Cost Price (₹)</th>
+                            <th class="num">Sale Price (₹)</th>
+                            <th class="num">Stock</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="productTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+    
+        <!-- Invoice Management Section -->
+        <section id="invoiceManagementSection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>Invoice Management</h2>
+                <div>
+                    <button class="btn btn-secondary" onclick="openInvoiceModal(null, 'SALES_RETURN')"><i class="fas fa-undo"></i> Create Sales Return</button>
+                    <button class="btn btn-primary" onclick="openInvoiceModal()"><i class="fas fa-plus"></i> Create New Invoice</button>
+                </div>
+            </div>
+            <div class="table-container">
+                <table id="invoiceTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>INVOICE #</th>
+                            <th>CUSTOMER</th>
+                            <th>TYPE</th>
+                            <th>INVOICE DATE</th>
+                            <th>DUE DATE</th>
+                            <th class="num">TOTAL (₹)</th>
+                            <th>STATUS</th>
+                            <th>ACTIONS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="invoiceTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+    
+        <!-- All Transactions Section -->
+        <section id="allTransactionsSection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>All Transactions</h2>
+                <button class="btn btn-primary" onclick="openTransactionModal()"><i class="fas fa-plus"></i> Add New Transaction</button>
+            </div>
+            <div class="table-container">
+                <table id="transactionTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>S.No</th>
+                            <th>Party</th>
+                            <th class="num">Amount (₹)</th>
+                            <th>Description</th>
+                            <th>Category</th>
+                            <th>Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </section>
+        
+        <!-- Business Finance Section -->
+        <section id="businessFinanceSection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>Business's External Finance Agreements</h2>
+                <div>
+                     <button class="btn btn-primary" onclick="openCreateBusinessChitLoanAgreementModal()"><i class="fas fa-file-signature"></i> Create Agreement</button>
+                </div>
+            </div>
+            <div class="table-container">
+                <table id="businessExternalFinanceTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th class="col-provider">Provider/Entity Name</th>
+                            <th class="col-type">Type</th>
+                            <th class="num col-principal">Principal (₹)</th>
+                            <th class="num col-rate">Interest Rate (% p.m.)</th>
+                            <th class="num col-emi">EMI (₹)</th>
+                            <th class="num col-payable">Interest Payable (₹)</th>
+                            <th class="num col-paid">Total Paid (₹)</th>
+                            <th class="num col-balance">Principal Balance (₹)</th>
+                            <th class="actions-cell">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="businessExternalFinanceTableBody"></tbody>
+                </table>
+            </div>
+             <h3 class="section-subheader">External Entities (Banks, Lenders, etc.)</h3>
+             <div class="section-header" style="border-bottom: none; padding-bottom: 0;">
+                <div></div> <!-- Empty div for alignment -->
+                <button class="btn btn-secondary" onclick="openLenderModal(null, 'Financial')"><i class="fas fa-plus"></i> Add Financial Entity</button>
+             </div>
+             <div class="table-container">
+                <table id="lendersTable" class="data-table">
+                     <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Contact Person</th>
+                            <th>Phone</th>
+                            <th>Notes</th>
+                            <th class="actions-cell">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="lendersTableBody"></tbody>
+                </table>
+             </div>
+        </section>
+        
+        <!-- Ledgers Section -->
+        <section id="ledgersSection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>Business Ledgers</h2>
+                <div class="ledger-tabs">
+                    <button class="ledger-tab-btn active" onclick="showLedger('cash')">Cash Ledger</button>
+                    <button class="ledger-tab-btn" onclick="showLedger('bank')">Bank Ledger</button>
+                </div>
+            </div>
+            <div id="cashLedgerContent">
+                <div class="ledger-header">
+                    <h3>Cash Ledger</h3>
+                    <div>
+                        <input type="date" id="cashLedgerDate" class="form-control">
+                        <button class="btn btn-secondary" onclick="printLedger('cashLedgerTable', 'Cash Ledger')"><i class="fas fa-print"></i> Print</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table id="cashLedgerTable" class="data-table ledger-table">
+                        <thead><tr><th>Date</th><th>Particulars</th><th>Description</th><th>Category</th><th class="num">Debit (In) (₹)</th><th class="num">Credit (Out) (₹)</th><th class="num">Balance (₹)</th></tr></thead>
+                        <tbody></tbody>
+                        <tfoot></tfoot>
+                    </table>
+                </div>
+            </div>
+            <div id="bankLedgerContent" style="display: none;">
+                <div class="ledger-header">
+                    <h3>Bank Ledger</h3>
+                    <div>
+                        <input type="date" id="bankLedgerDate" class="form-control">
+                        <button class="btn btn-secondary" onclick="printLedger('bankLedgerTable', 'Bank Ledger')"><i class="fas fa-print"></i> Print</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table id="bankLedgerTable" class="data-table ledger-table">
+                         <thead><tr><th>Date</th><th>Particulars</th><th>Description</th><th>Category</th><th class="num">Debit (In) (₹)</th><th class="num">Credit (Out) (₹)</th><th class="num">Balance (₹)</th></tr></thead>
+                        <tbody></tbody>
+                        <tfoot></tfoot>
+                    </table>
+                </div>
+            </div>
+        </section>
+    
+        <!-- Reports Section -->
+        <section id="reportsSection" class="app-section" style="display: none;">
+             <div class="section-header">
+                <h2>Reports & Analytics</h2>
+                <div>
+                    <label for="reportPeriodMonth">Select Period:</label>
+                    <input type="month" id="reportPeriodMonth" class="form-control">
+                </div>
+            </div>
+            <div class="report-buttons-container">
+                <button class="btn btn-secondary" onclick="generateAndDisplayReport('turnover_report')">Turnover Report</button>
+                <button class="btn btn-secondary" onclick="generateAndDisplayReport('pnl_summary')">P&L Summary</button>
+                <button class="btn btn-secondary" onclick="generateAndDisplayReport('cash_flow')">Cash Flow</button>
+                <button class="btn btn-secondary" onclick="generateAndDisplayReport('business_valuation')">Valuation</button>
+                <button class="btn btn-secondary" onclick="generateAndDisplayReport('payments_breakdown')">Payments Breakdown</button>
+                <button class="btn btn-secondary" onclick="generateAndDisplayReport('top_customers')">Top Customers</button>
+                <button class="btn btn-secondary" onclick="generateAndDisplayReport('top_products')">Top Products</button>
+                <button class="btn btn-primary" onclick="generateAndDisplayReport('full_disclosure')">Full Disclosure Report</button>
+            </div>
+            <div id="reportDisplayArea" class="report-display-area" style="display: none;"></div>
+        </section>
+        
+        <!-- Company Section -->
+        <section id="companySection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>Company Operations</h2>
+                 <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-warning" onclick="runGoogleSheetsImport()"><i class="fas fa-file-import"></i> Import from Google Sheets</button>
+                    <button class="btn btn-success" onclick="openOnboardingModal()"><i class="fas fa-database"></i> Onboard Existing Data</button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('openingBalanceModal').classList.add('show')"><i class="fas fa-piggy-bank"></i> Set Opening Balances</button>
+                    <button class="btn btn-primary" onclick="openCompanyExpenseModal()"><i class="fas fa-plus"></i> New Expense</button>
+                </div>
+            </div>
+            
+            <!-- NEW COMPANY PROFILE FORM -->
+            <h3 class="section-subheader">Company Profile for Printing</h3>
+            <div class="form-container" style="background-color: #fff; padding: 20px; border-radius: var(--border-radius); box-shadow: var(--box-shadow);">
+                <form id="companyProfileForm">
+                    <input type="hidden" id="companyId">
+                    <fieldset>
+                        <legend>Company Information</legend>
+                        <div class="form-grid" style="grid-template-columns: repeat(3, 1fr);">
+                            <div class="form-group grid-col-span-2">
+                                <label for="company_name_input">Company Name*</label>
+                                <input type="text" id="company_name_input" required class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label for="company_gstin_input">GSTIN</label>
+                                <input type="text" id="company_gstin_input" class="form-control">
+                            </div>
+                        </div>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Contact & Address</legend>
+                        <div class="form-grid" style="grid-template-columns: repeat(3, 1fr);">
+                             <div class="form-group">
+                                <label for="company_address1_input">Address Line 1</label>
+                                <input type="text" id="company_address1_input" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label for="company_city_pincode_input">City & Pincode</label>
+                                <input type="text" id="company_city_pincode_input" class="form-control">
+                            </div>
+                             <div class="form-group">
+                                <label for="company_state_input">State</label>
+                                <input type="text" id="company_state_input" class="form-control">
+                            </div>
+                             <div class="form-group">
+                                <label for="company_phone_input">Phone</label>
+                                <input type="tel" id="company_phone_input" class="form-control">
+                            </div>
+                            <div class="form-group grid-col-span-2">
+                                <label for="company_email_input">Email</label>
+                                <input type="email" id="company_email_input" class="form-control">
+                            </div>
+                        </div>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Bank Details</legend>
+                        <div class="form-grid" style="grid-template-columns: repeat(3, 1fr);">
+                            <div class="form-group">
+                                <label for="company_bank_name_input">Bank Name</label>
+                                <input type="text" id="company_bank_name_input" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label for="company_bank_account_no_input">Account No.</label>
+                                <input type="text" id="company_bank_account_no_input" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label for="company_bank_ifsc_input">IFSC Code</label>
+                                <input type="text" id="company_bank_ifsc_input" class="form-control">
+                            </div>
+                        </div>
+                    </fieldset>
+                    <button type="submit" class="btn btn-primary">Save Company Profile</button>
+                </form>
+            </div>
+
+            <h3 class="section-subheader">General & Administrative Expenses</h3>
+            <div class="table-container">
+                <table id="companyExpensesTable" class="data-table">
+                    <thead><tr><th>Date</th><th>Category</th><th>Description</th><th class="num">Amount (₹)</th><th>Actions</th></tr></thead>
+                    <tbody id="companyExpensesTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+  </div>
+
+  <!-- All Modals (Hidden by default) -->
+    
+    <!-- Customer Modal -->
+    <div id="userModal" class="modal"><div class="modal-content large"><div class="modal-header"><h2 id="userModalTitle">Customer Details</h2><button class="close-btn" onclick="closeUserModal()">×</button></div><div class="modal-body"><form id="userForm"><fieldset><legend>Basic Information</legend><div class="form-grid"><div class="form-group"><label for="username">Customer Name*</label><input type="text" id="username" name="username" required></div><div class="form-group"><label for="company">Company Name</label><input type="text" id="company" name="company"></div><div class="form-group"><label for="email">Email</label><input type="email" id="email" name="email"></div><div class="form-group"><label for="phone">Phone</label><input type="tel" id="phone" name="phone"></div><div class="form-group"><label for="balance">Opening Balance (₹)</label><input type="number" step="0.01" id="balance" name="balance" value="0.00" required></div></div></fieldset><fieldset><legend>Address & Tax Information</legend><div class="form-grid"><div class="form-group"><label for="address_line1">Address Line 1</label><input type="text" id="address_line1" name="address_line1"></div><div class="form-group"><label for="address_line2">Address Line 2</label><input type="text" id="address_line2" name="address_line2"></div><div class="form-group"><label for="city_pincode">City & Pincode</label><input type="text" id="city_pincode" name="city_pincode"></div><div class="form-group"><label for="state">State</label><input type="text" id="state" name="state"></div><div class="form-group"><label for="gstin">GSTIN</label><input type="text" id="gstin" name="gstin"></div><div class="form-group"><label for="state_code">State Code</label><input type="text" id="state_code" name="state_code"></div></div></fieldset><button type="submit" class="btn btn-primary">Save Customer</button></form></div></div></div>
+    
+    <!-- Lender/Supplier Modal -->
+    <div id="lenderModal" class="modal"><div class="modal-content"><div class="modal-header"><h2 id="lenderModalTitle">Add New External Entity</h2><button class="close-btn" onclick="closeLenderModal()">×</button></div><div class="modal-body"><form id="lenderForm"><input type="hidden" id="lenderId"><div class="form-row"><div class="form-group"><label for="lenderName">Entity Name*</label><input type="text" id="lenderName" required></div><div class="form-group"><label for="lenderEntityType">Entity Type</label><select id="lenderEntityType" class="form-control"><option value="Supplier">Supplier</option><option value="Financial">Financial</option><option value="General">General</option></select></div></div><div class="form-row"><div class="form-group"><label for="lenderContactPerson">Contact Person</label><input type="text" id="lenderContactPerson"></div><div class="form-group"><label for="lenderPhone">Phone</label><input type="tel" id="lenderPhone"></div></div><div class="form-group"><label for="lenderEmail">Email</label><input type="email" id="lenderEmail"></div><div class="form-group" id="initialPayableGroup" style="display: none;"><label for="lenderInitialPayable">Initial Payable Balance (₹)</label><input type="number" id="lenderInitialPayable" step="0.01" value="0.00"></div><div class="form-group"><label for="lenderNotes">Notes</label><textarea id="lenderNotes" rows="3"></textarea></div><button type="submit" class="btn btn-primary">Save Entity</button></form></div></div></div>
+
+    <!-- Universal Transaction Modal -->
+    <div id="transactionModal" class="modal"><div class="modal-content large"><div class="modal-header"><h2 id="transactionModalTitle">New Transaction</h2><button class="close-btn" onclick="closeTransactionModal()">×</button></div><div class="modal-body"><form id="transactionForm"><input type="hidden" id="related_invoice_id"><div class="form-group radio-group"><label>Party Type:</label><input type="radio" id="txPartyTypeCustomer" name="txPartyType" value="customer" checked> <label for="txPartyTypeCustomer">Customer/Party</label><input type="radio" id="txPartyTypeLender" name="txPartyType" value="lender"> <label for="txPartyTypeLender">Supplier/External</label></div><div class="form-group"><select id="transaction_user_id" class="form-control"></select></div><div class="form-group" style="display:none;"><select id="transaction_lender_id" class="form-control"></select></div><div class="form-group" style="display:none;"><select id="transaction_agreement_id" class="form-control"></select></div><div class="form-row"><div class="form-group" style="flex:2;"><label for="category">Base Category*</label><select id="category" required class="form-control"></select></div><div class="form-group" style="flex:1;"><label for="amount">Amount (₹):</label><input type="number" id="amount" step="0.01" required class="form-control"></div><div class="form-group" style="flex:1;"><label for="date">Date*</label><input type="date" id="date" required class="form-control"></div></div><div id="paymentModeGroup" class="form-group radio-group" style="display:none;"><label>Payment Mode:</label><input type="radio" id="txPayModeCash" name="txPaymentMode" value="Cash" checked> <label for="txPayModeCash">Cash</label><input type="radio" id="txPayModeBank" name="txPaymentMode" value="Bank"> <label for="txPayModeBank">Bank</label><input type="radio" id="txPayModeCredit" name="txPaymentMode" value="On Credit"> <label for="txPayModeCredit">On Credit</label></div><div id="transactionLineItemsSection" style="display:none;"><fieldset><legend>Line Items</legend><table id="txLineItemsTable" style="width:100%;"><thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead><tbody id="txLineItemsTableBody"></tbody><tfoot><tr><td colspan="3" style="text-align:right; font-weight:bold;">Grand Total:</td><td id="txLineItemsGrandTotal" style="font-weight:bold;">0.00</td><td></td></tr></tfoot></table><button type="button" class="btn btn-secondary btn-sm" onclick="addTxLineItemRow()">+ Add Item</button></fieldset></div><div class="form-group"><label for="description">Description / Notes</label><textarea id="description" rows="2" class="form-control"></textarea></div><button type="submit" class="btn btn-primary">Save Transaction</button></form></div></div></div>
+    
+    <!-- Product Modal -->
+    <div id="productModal" class="modal"><div class="modal-content" style="max-width: 900px;"><div class="modal-header"><h2 id="productModalTitle">Product Details</h2><button class="close-btn" onclick="closeProductModal()">×</button></div><div class="modal-body"><form id="productForm"><input type="hidden" id="productId"><fieldset><legend>Core Product Information</legend><div class="form-grid"><div class="form-group grid-col-span-2"><label for="productName">Product Name*</label><input type="text" id="productName" required></div><div class="form-group"><label for="productSku">SKU / Code</label><input type="text" id="productSku"></div><div class="form-group"><label for="productHsnAcs">HSN/ACS Code</label><input type="text" id="productHsnAcs"></div><div class="form-group grid-col-span-4"><label for="productDescription">Description</label><textarea id="productDescription" rows="2"></textarea></div></div></fieldset><fieldset><legend>Pricing & Stock</legend><div class="form-grid"><div class="form-group"><label for="productCostPrice">Cost Price (₹)</label><input type="number" id="productCostPrice" step="0.01"></div><div class="form-group"><label for="productSalePrice">Sale Price (₹)*</label><input type="number" id="productSalePrice" step="0.01" required></div><div class="form-group"><label for="productCurrentStock">Current Stock*</label><input type="number" id="productCurrentStock" step="1" required></div><div class="form-group"><label for="productUnitOfMeasure">Unit</label><input type="text" id="productUnitOfMeasure" placeholder="e.g., pcs, kg, mtr"></div><div class="form-group"><label for="productLowStockThreshold">Low Stock Threshold</label><input type="number" id="productLowStockThreshold" step="1"></div><div class="form-group"><label for="productReorderLevel">Reorder Level</label><input type="number" id="productReorderLevel" step="1"></div></div></fieldset><button type="submit" class="btn btn-primary">Save Product Details</button></form><hr style="margin: 20px 0;"><div class="section-header"><h3>Linked Suppliers</h3><button class="btn btn-secondary" onclick="openProductSupplierLinkModal()">+ Link Supplier</button></div><div class="table-container"><table id="productSuppliersTable" class="data-table"><thead><tr><th>Supplier</th><th>Supplier SKU</th><th>Purchase Price</th><th>Preferred</th><th>Actions</th></tr></thead><tbody id="productSuppliersTableBody"></tbody></table></div></div></div></div>
+
+    <!-- Link Product-Supplier Modal -->
+    <div id="productSupplierLinkModal" class="modal"><div class="modal-content"><div class="modal-header"><h2 id="productSupplierLinkModalTitle">Link Supplier to Product</h2><button class="close-btn" onclick="closeProductSupplierLinkModal()">×</button></div><div class="modal-body"><form id="productSupplierLinkForm"><input type="hidden" id="linkModalProductId"><input type="hidden" id="productSupplierLinkId"><div class="form-group"><label for="linkSupplierId">Supplier*</label><select id="linkSupplierId" class="form-control" required></select></div><div class="form-group"><label for="linkSupplierPurchasePrice">Purchase Price (₹)</label><input type="number" id="linkSupplierPurchasePrice" step="0.01"></div><div class="form-group"><label for="linkSupplierSku">Supplier's SKU / Code</label><input type="text" id="linkSupplierSku"></div><div class="form-group"><label for="linkSupplierLeadTime">Lead Time (days)</label><input type="number" id="linkSupplierLeadTime"></div><div class="form-group"><label for="linkSupplierNotes">Notes</label><textarea id="linkSupplierNotes" rows="2"></textarea></div><div class="form-group"><input type="checkbox" id="linkIsPreferredSupplier"> <label for="linkIsPreferredSupplier">This is the preferred supplier</label></div><button type="submit" class="btn btn-primary">Save Link</button></form></div></div></div>
+
+    <!-- Invoice Modal -->
+    <div id="invoiceModal" class="modal"><div class="modal-content extra-large"><div class="modal-header"><h2 id="invoiceModalTitle">New Invoice</h2><button class="close-btn" onclick="closeInvoiceModal()">×</button></div><div class="modal-body"><form id="invoiceForm"><input type="hidden" id="invoiceId">
+        <div class="invoice-form-grid">
+            <fieldset id="originalInvoiceSection" class="inv-grid-customer" style="display: none;">
+                <legend>Original Invoice Details</legend>
+                <div class="form-group">
+                    <label for="original_invoice_number_input">Enter Original Invoice Number*</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="original_invoice_number_input" class="form-control" placeholder="e.g., INV-00123">
+                        <button type="button" class="btn btn-secondary" onclick="loadOriginalInvoiceForReturn()">Load Items</button>
+                    </div>
+                </div>
+                <div id="originalInvoiceInfo" style="font-size: 0.9em; color: var(--text-light-color);"></div>
+            </fieldset>
+
+            <fieldset id="customerDetailsSection" class="inv-grid-customer"><legend>Customer & Invoice Details</legend><div class="form-group"><label for="inv_customer_id">Customer*</label><select id="inv_customer_id" class="form-control" required></select></div><div class="form-group"><label>Customer Name</label><input type="text" id="inv_customer_name_display" readonly></div><div class="form-group"><label>Customer Address</label><textarea id="inv_customer_address_display" rows="3" readonly></textarea></div><div class="form-group"><label>Customer GSTIN</label><input type="text" id="inv_customer_gstin_display" readonly></div><div class="form-group"><label>Customer State Code</label><input type="text" id="inv_customer_statecode_display" readonly></div><div class="form-row"><div class="form-group"><label for="inv_invoice_number_display">Invoice #*</label><input type="text" id="inv_invoice_number_display" required></div><div class="form-group"><label for="inv_invoice_date">Invoice Date*</label><input type="date" id="inv_invoice_date" required></div><div class="form-group"><label for="inv_due_date">Due Date*</label><input type="date" id="inv_due_date" required></div></div><div class="form-row"><div class="form-group"><label for="inv_invoice_type">Invoice Type*</label><select id="inv_invoice_type" class="form-control" required><option value="TAX_INVOICE">Tax Invoice</option><option value="BILL_OF_SUPPLY">Bill of Supply</option><option value="SALES_RETURN">Sales Return / Credit Note</option><option value="PARTY_BILL">Party Bill</option><option value="NON_GST_RETAIL_BILL">Non-GST Retail</option></select></div><div class="form-group"><label for="inv_status">Status</label><select id="inv_status" class="form-control"><option value="Draft">Draft</option><option value="Sent">Sent</option><option value="Paid">Paid</option><option value="Partially Paid">Partially Paid</option><option value="Overdue">Overdue</option><option value="Void">Void</option></select></div></div></fieldset><fieldset class="inv-grid-consignee"><legend>Shipping & Consignee Details</legend><div class="form-group"><input type="checkbox" id="inv_same_as_customer"> <label for="inv_same_as_customer">Consignee is same as Customer</label></div><div id="invConsigneeFields" style="display:none;"><div class="form-group"><label for="inv_consignee_name">Consignee Name</label><input type="text" id="inv_consignee_name"></div><div class="form-group"><label for="inv_consignee_address_line1">Address Line 1</label><input type="text" id="inv_consignee_address_line1"></div><div class="form-group"><label for="inv_consignee_address_line2">Address Line 2</label><input type="text" id="inv_consignee_address_line2"></div><div class="form-group"><label for="inv_consignee_city_pincode">City & Pincode</label><input type="text" id="inv_consignee_city_pincode"></div><div class="form-row"><div class="form-group"><label for="inv_consignee_state">State</label><input type="text" id="inv_consignee_state"></div><div class="form-group"><label for="inv_consignee_state_code">State Code</label><input type="text" id="inv_consignee_state_code"></div></div><div class="form-group"><label for="inv_consignee_gstin">GSTIN</label><input type="text" id="inv_consignee_gstin"></div></div><div class="form-row"><div class="form-group"><label>Place of Supply</label><input type="text" id="inv_place_of_supply_state"></div><div class="form-group"><label>State Code</label><input type="text" id="inv_place_of_supply_state_code"></div></div></fieldset><div class="inv-grid-items grid-col-span-2"><fieldset><legend>Line Items</legend><div class="table-container" style="max-height: 250px; overflow-y: auto;"><table id="invLineItemsTable" class="data-table"><thead><tr><th style="width:30%">Product/Service</th><th>HSN</th><th>UoM</th><th>Qty</th><th>Rate</th><th>Discount</th><th>Taxable Amt</th><th>Actions</th></tr></thead><tbody id="invLineItemsTableBody"></tbody></table></div><button type="button" class="btn btn-secondary btn-sm" onclick="addInvLineItemRow()">+ Add Item</button></fieldset></div><div class="inv-grid-summary grid-col-span-2"><div class="invoice-summary"><div class="form-row" id="invGstSection"><div class="form-group"><label>CGST Rate (%)</label><input type="number" step="0.01" id="inv_cgst_rate_overall" oninput="updateInvTotals()" class="form-control"></div><div class="form-group"><label>SGST Rate (%)</label><input type="number" step="0.01" id="inv_sgst_rate_overall" oninput="updateInvTotals()" class="form-control"></div><div class="form-group"><label>IGST Rate (%)</label><input type="number" step="0.01" id="inv_igst_rate_overall" oninput="updateInvTotals()" class="form-control"></div></div><div class="form-group" id="invPartyBillReturnsSection" style="display:none;"><input type="hidden" id="inv_party_bill_returns_amount" value="0"></div><table class="totals-table"><tbody><tr><td>Subtotal</td><td id="invSubtotal" class="num">0.00</td></tr><tr id="invGstSummarySection"><td>Total GST (CGST+SGST+IGST)</td><td class="num"><span id="invTotalCGST">0.00</span> + <span id="invTotalSGST">0.00</span> + <span id="invTotalIGST">0.00</span></td></tr><tr id="invReturnsDisplay" style="display:none;"><td>Less: Returns</td><td id="invReturnsAmountDisplay" class="num negative">0.00</td></tr><tr class="grand-total"><td>Grand Total</td><td id="invGrandTotal" class="num">0.00</td></tr></tbody></table></div></div>
+            <div class="inv-grid-payment grid-col-span-2">
+                <fieldset><legend>Payment & Notes</legend>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Amount Paid Already (₹)</label>
+                            <span id="inv_cumulative_paid_display" class="form-display">0.00</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="inv_payment_being_made_now">Payment Being Made Now (₹)</label>
+                            <input type="number" id="inv_payment_being_made_now" step="0.01" class="form-control">
+                        </div>
+                        <div class="form-group" id="inv_payment_method_group" style="display: none;">
+                            <label>Payment Method*</label>
+                            <div class="radio-group">
+                                <input type="radio" id="inv_pay_method_cash" name="inv_payment_method" value="Cash" checked>
+                                <label for="inv_pay_method_cash">Cash</label>
+                                <input type="radio" id="inv_pay_method_bank" name="inv_payment_method" value="Bank">
+                                <label for="inv_pay_method_bank">Bank</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="inv_notes">Notes / Terms & Conditions</label>
+                        <textarea id="inv_notes" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="inv_amount_in_words">Amount in Words</label>
+                        <input type="text" id="inv_amount_in_words" class="form-control">
+                    </div>
+                </fieldset>
+            </div>
+            <fieldset class="inv-grid-extra grid-col-span-2"><legend>Additional Details</legend><div class="form-grid" style="grid-template-columns: repeat(4, 1fr);"><div class="form-group"><label for="inv_reverse_charge">Reverse Charge</label><select id="inv_reverse_charge" class="form-control"><option value="No">No</option><option value="Yes">Yes</option></select></div><div class="form-group"><label for="inv_transportation_mode">Transport Mode</label><input type="text" id="inv_transportation_mode"></div><div class="form-group"><label for="inv_vehicle_number">Vehicle No.</label><input type="text" id="inv_vehicle_number"></div><div class="form-group"><label for="inv_date_of_supply">Date of Supply</label><input type="date" id="inv_date_of_supply"></div><div class="form-group"><label for="inv_bundles_count">No. of Bundles</label><input type="number" id="inv_bundles_count"></div></div></fieldset></div></form></div><div class="modal-footer"><button type="button" class="btn btn-secondary" onclick="printCurrentInvoice()"><i class="fas fa-print"></i> Print</button><button id="saveInvoiceBtn" type="submit" form="invoiceForm" class="btn btn-primary">Save Invoice</button></div></div></div>
+
+    <!-- User Transaction History Modal -->
+    <div id="userTransactionHistoryModal" class="modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h2 id="userTransactionHistoryModalTitle"></h2>
+                <div>
+                    <button class="btn btn-secondary btn-sm" onclick="printTransactionHistory('userTransactionHistoryTable', document.getElementById('userTransactionHistoryModalTitle').textContent)">
+                        <i class="fas fa-print"></i> Print
+                    </button>
+                    <button class="close-btn" onclick="closeUserTransactionHistoryModal()">×</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="filter-bar">
+                    <label>Filter:</label>
+                    <select id="userTxHistoryCategoryFilter" class="form-control" style="width: auto;"></select>
+                </div>
+                <div class="table-container">
+                    <table id="userTransactionHistoryTable" class="data-table">
+                        <thead>
+                            <tr><th>Date</th><th>Particulars</th><th class="num">Debit (₹)</th><th class="num">Credit (₹)</th><th class="num">Balance (₹)</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot></tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Entity Transaction History Modal -->
+    <div id="entityTransactionHistoryModal" class="modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h2 id="entityTransactionHistoryModalTitle"></h2>
+                <div>
+                     <button class="btn btn-secondary btn-sm" onclick="printTransactionHistory('entityTransactionHistoryTable', document.getElementById('entityTransactionHistoryModalTitle').textContent)">
+                        <i class="fas fa-print"></i> Print
+                    </button>
+                    <button class="close-btn" onclick="closeEntityTransactionHistoryModal()">×</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="table-container">
+                    <table id="entityTransactionHistoryTable" class="data-table">
+                        <thead>
+                            <tr><th>Date</th><th>Category</th><th>Description</th><th class="num">Debit (₹)</th><th class="num">Credit (₹)</th><th class="num">Balance (₹)</th></tr>
+                        </thead>
+                        <tbody id="entityTransactionHistoryTableBody"></tbody>
+                        <tfoot></tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Other Modals -->
+    <div id="businessChitLoanAgreementModal" class="modal"><div class="modal-content"><div class="modal-header"><h2 id="businessChitLoanAgreementModalTitle"></h2><button class="close-btn" onclick="closeBusinessChitLoanAgreementModal()">×</button></div><div class="modal-body"><form id="businessChitLoanAgreementForm"><input type="hidden" id="agreementId"><div class="form-group"><label>Entity*</label><select id="agreement_entity_id" class="form-control" required></select></div><div class="form-row"><div class="form-group"><label>Type*</label><select id="agreement_type" class="form-control" required><option value="loan_taken_by_biz">Loan Taken</option><option value="loan_given_by_biz">Loan Given</option><option value="chit_investment">Chit Investment</option></select></div><div class="form-group"><label>Amount (₹)*</label><input type="number" id="agreement_total_amount" step="0.01" required></div><div class="form-group"><label>Interest Rate (% p.m.)</label><input type="number" id="agreement_interest_rate" step="0.01" value="0"></div><div class="form-group"><label>Start Date*</label><input type="date" id="agreement_start_date" required></div></div><div class="form-group"><label>Details / EMI Info</label><textarea id="agreement_details" rows="2"></textarea></div><button type="submit" class="btn btn-primary">Save Agreement</button></form></div></div></div>
+    <div id="loanFundsReceiptModal" class="modal"><div class="modal-content"><div class="modal-header"><h2 id="loanFundsReceiptModalTitle">Record Initial Loan Funds</h2><button class="close-btn" onclick="closeLoanFundsReceiptModal()">×</button></div><div class="modal-body"><form id="loanFundsReceiptForm"><input type="hidden" id="receipt_agreement_id"><input type="hidden" id="receipt_lender_id"><input type="hidden" id="receipt_agreement_type"><p>Record the transaction for this new loan.</p><div class="form-group"><label>Amount (₹)</label><input type="number" id="receipt_amount" readonly></div><div class="form-group"><label>Date</label><input type="date" id="receipt_date" readonly></div><div class="form-group radio-group"><label>Method:</label><input type="radio" name="receipt_method" value="Bank" checked> To Bank <input type="radio" name="receipt_method" value="Cash"> To Cash</div><button type="submit" class="btn btn-primary">Create Transaction</button></form></div></div></div>
+    
+    <div id="repayLoanModal" class="modal"><div class="modal-content"><div class="modal-header"><h2 id="repayLoanModalTitle">Repay Loan</h2><button class="close-btn" onclick="closeRepayLoanModal()">×</button></div><div class="modal-body"><form id="repayLoanForm"><input type="hidden" id="repay_agreement_id"><div class="repay-info"><div>Outstanding Principal: <strong>₹<span id="repay_outstanding_principal">0.00</span></strong></div><div>Interest Due: <strong>₹<span id="repay_interest_payable">0.00</span></strong></div></div><div class="form-group"><label for="repay_payment_amount">Payment Amount (₹)*</label><input type="number" id="repay_payment_amount" class="form-control" step="0.01" required></div><div class="form-group radio-group"><label>Apply To:</label><input type="radio" id="repay_type_combined" name="repay_payment_type" value="combined" checked onchange="toggleRepayOptions()"> <label for="repay_type_combined">Combined</label><input type="radio" id="repay_type_interest" name="repay_payment_type" value="interest" onchange="toggleRepayOptions()"> <label for="repay_type_interest">Interest Only</label><input type="radio" id="repay_type_principal" name="repay_payment_type" value="principal" onchange="toggleRepayOptions()"> <label for="repay_type_principal">Principal Only</label></div><div class="form-group radio-group"><label>Method:</label><input type="radio" id="repay_method_bank" name="repay_payment_method" value="Bank" checked> <label for="repay_method_bank">From Bank</label><input type="radio" id="repay_method_cash" name="repay_payment_method" value="Cash"> <label for="repay_method_cash">From Cash</label></div><div class="form-group"><label for="repay_date">Date*</label><input type="date" id="repay_date" class="form-control" required></div><button type="submit" class="btn btn-primary">Process Payment</button></form></div></div></div>
+
+    <div id="loanDetailsModal" class="modal"><div class="modal-content large"><div class="modal-header"><h2 id="loanDetailsTitle"></h2><button class="close-btn" onclick="closeLoanDetailsModal()">×</button></div><div class="modal-body"><div id="loanDetailsHeaderInfo"></div><div class="disclosure-split-view"><div class="disclosure-section"><h4>Interest Breakdown</h4><div class="table-container"><table class="data-table"><thead><tr><th>Month</th><th class="num">Interest Due (₹)</th><th>Status</th></tr></thead><tbody id="loanInterestBreakdownTableBody"></tbody></table></div></div><div class="disclosure-section"><h4>Payment History</h4><div class="table-container"><table class="data-table"><thead><tr><th>Date</th><th>Type</th><th class="num">Amount (₹)</th></tr></thead><tbody id="loanPaymentHistoryTableBody"></tbody></table></div></div></div></div></div></div>
+    <div id="companyExpenseModal" class="modal"><div class="modal-content"><div class="modal-header"><h2 id="companyExpenseModalTitle">New Company Expense</h2><button class="close-btn" onclick="closeCompanyExpenseModal()">×</button></div><div class="modal-body"><form id="companyExpenseForm"><div class="form-group"><label for="expenseCategory">Category</label><select id="expenseCategory" class="form-control"><option value="Rent Paid">Rent</option><option value="Utilities Paid">Utilities</option><option value="Salaries Paid">Salaries</option><option value="Office Supplies Purchased">Office Supplies</option><option value="Marketing Expenses">Marketing</option><option value="Other Business Expense">Other</option></select></div><div class="form-group"><label for="expenseAmount">Amount (₹)</label><input type="number" id="expenseAmount" step="0.01" required></div><div class="form-group radio-group"><label>Paid From:</label><input type="radio" name="expensePayMode" value="Bank" checked> Bank <input type="radio" name="expensePayMode" value="Cash"> Cash</div><div class="form-group"><label for="expenseDate">Date</label><input type="date" id="expenseDate" required></div><div class="form-group"><label for="expenseDescription">Description</label><textarea id="expenseDescription" rows="2" required></textarea></div><button type="submit" class="btn btn-primary">Record Expense</button></form></div></div></div>
+    <div id="openingBalanceModal" class="modal"><div class="modal-content"><div class="modal-header"><h2 id="openingBalanceModalTitle">Set Opening Balances</h2><button class="close-btn" onclick="document.getElementById('openingBalanceModal').classList.remove('show')">×</button></div><div class="modal-body"><form id="openingBalanceForm"><p>This is a one-time setup action.</p><div class="form-group"><label for="opening_bank_balance">Bank Balance (₹)</label><input type="number" id="opening_bank_balance" step="0.01" value="0.00" required></div><div class="form-group"><label for="opening_cash_balance">Cash Balance (₹)</label><input type="number" id="opening_cash_balance" step="0.01" value="0.00" required></div><div class="form-group"><label for="opening_balance_date">As of Date</label><input type="date" id="opening_balance_date" required></div><button type="submit" class="btn btn-primary">Set Balances</button></form></div></div></div>
+
+    <div id="onboardingModal" class="modal"><div class="modal-content large"><div class="modal-header"><h2>Onboard Historical Data</h2><button class="close-btn" onclick="document.getElementById('onboardingModal').classList.remove('show')">×</button></div><div class="modal-body"><div class="ledger-tabs"><button class="ledger-tab-btn active" onclick="showOnboardingTab('customer')">Set Customer/Supplier Balance</button><button class="ledger-tab-btn" onclick="showOnboardingTab('loan')">Onboard Existing Loan</button></div><div id="onboardCustomerTab" class="onboarding-tab"><h4 class="section-subheader">Set Final Pending Balance for a Customer/Supplier</h4><p>Enter the final "Pending" amount from your spreadsheet for a specific party. This will create a single opening balance transaction.</p><form id="customerBalanceForm"><div class="form-row"><div class="form-group"><label for="onboard_customer_id">Select Customer*</label><select id="onboard_customer_id" class="form-control" required></select></div><div class="form-group"><label for="onboard_customer_balance">Final Pending Balance (₹)*</label><input type="number" id="onboard_customer_balance" step="0.01" required></div><div class="form-group"><label for="onboard_balance_date">Balance as of Date*</label><input type="date" id="onboard_balance_date" required></div></div><p style="font-size: 0.8em; color: #666;">Note: A positive amount means the customer owes you money (Receivable). A negative amount means you owe the customer money (Payable/Advance).</p><button type="submit" class="btn btn-primary">Set Customer Balance</button></form></div><div id="onboardLoanTab" class="onboarding-tab" style="display:none;"><h4 class="section-subheader">Onboard an Existing Loan</h4><p>Record an existing loan you have taken from a financial entity. This will create a new Business Agreement to track it.</p><form id="existingLoanForm"><div class="form-row"><div class="form-group"><label for="onboard_lender_id">Financial Entity*</label><select id="onboard_lender_id" class="form-control" required></select></div><div class="form-group"><label for="onboard_loan_original_amount">Original Loan Amount (₹)</label><input type="number" id="onboard_loan_original_amount" step="0.01"></div><div class="form-group"><label for="onboard_loan_current_balance">Current Outstanding Balance (₹)*</label><input type="number" id="onboard_loan_current_balance" step="0.01" required></div></div><div class="form-row"><div class="form-group"><label for="onboard_loan_start_date">Original Loan Start Date*</label><input type="date" id="onboard_loan_start_date" required></div><div class="form-group"><label for="onboard_loan_last_paid_date">Last Paid Date*</label><input type="date" id="onboard_loan_last_paid_date" required></div><div class="form-group"><label for="onboard_loan_interest_rate">Interest Rate (% p.m.)</label><input type="number" id="onboard_loan_interest_rate" step="0.01" value="0"></div></div><div class="form-group"><label for="onboard_loan_details">Details (e.g., Loan ID, EMI)</label><textarea id="onboard_loan_details" rows="2"></textarea></div><button type="submit" class="btn btn-primary">Onboard Loan</button></form></div></div></div></div>
+
+
+  <script src="/app-script.js"></script>
+</body>
+</html>

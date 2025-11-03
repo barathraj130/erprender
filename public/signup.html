@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up - ERP System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+    <link rel="stylesheet" href="/login.css">
+</head>
+<body>
+    <div class="login-page-container">
+        <div class="branding-panel">
+             <div class="branding-content">
+                <div class="logo">
+                    <i class="fas fa-rocket"></i>
+                    <h1>Get Started!</h1>
+                </div>
+                <p class="tagline">Join us and streamline your business operations. A powerful, intuitive ERP is just a few clicks away.</p>
+            </div>
+            <div class="branding-footer">
+                © 2025 ERP System. All Rights Reserved.
+            </div>
+        </div>
+        <div class="login-panel" style="align-items: flex-start; overflow-y: auto;">
+            <div class="login-box signup-box">
+                <h2>Create Your Account</h2>
+                <p class="subtitle">Let's get your company set up.</p>
+                <form id="signupForm">
+                    <fieldset>
+                        <legend>Company Details</legend>
+                        <div class="form-group"><label for="company_name">Company Name*</label><input type="text" id="company_name" name="company_name" required></div>
+                        <div class="form-group"><label for="state">State*</label><input type="text" id="state" name="state" required placeholder="e.g., Tamil Nadu"></div>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Administrator Account</legend>
+                         <div class="form-group"><label for="username">Your Username*</label><input type="text" id="username" name="username" required></div>
+                         <div class="form-group"><label for="userEmail">Your Email*</label><input type="email" id="userEmail" name="userEmail" required></div>
+                        <div class="form-group"><label for="password">Password*</label><input type="password" id="password" name="password" required></div>
+                    </fieldset>
+                    <p id="message" class="message"></p>
+                    <button type="submit" class="btn-login">Create Account</button>
+                </form>
+                <div class="signup-link">
+                    Already have an account? <a href="/login.html">Sign In</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('signupForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = 'Processing...';
+            messageEl.className = 'message';
+            const data = {
+                company_name: form.company_name.value,
+                state: form.state.value,
+                username: form.username.value,
+                userEmail: form.userEmail.value,
+                password: form.password.value,
+            };
+            try {
+                const res = await fetch('/api/jwt-auth/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || 'Signup failed');
+                messageEl.textContent = result.message + ' Redirecting to login...';
+                messageEl.className = 'message success';
+                setTimeout(() => { window.location.href = '/login.html'; }, 3000);
+            } catch (error) {
+                messageEl.textContent = error.message;
+                messageEl.className = 'message error';
+            }
+        });
+    </script>
+</body>
+</html>
