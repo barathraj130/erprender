@@ -3,6 +3,8 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
 // --- POSTGRES CONFIGURATION ---
+// DATABASE_URL environment variable is provided by Render's PostgreSQL service
+// We use the provided URL as the fallback for local testing.
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://erp_iglu_user:tQ6aeuLk4FIEqsSmYFuSMV6FB4xUwqtt@dpg-d4337g7gi27c73fn0os0-a/erp_iglu";
 
 const pool = new Pool({
@@ -17,6 +19,7 @@ console.log("ℹ️ [db.js] Attempting to connect to PostgreSQL...");
 
 pool.on('error', (err, client) => {
   console.error('❌ [db.js] Unexpected error on idle client', err);
+  // Do not exit in production unless absolutely necessary, but fatal here.
   process.exit(1);
 });
 
@@ -27,17 +30,17 @@ async function initializeDb() {
     console.log("✅ [db.js] Connected to the PostgreSQL database.");
     
     // --- 1. ISOLATED ENUM CREATION ---
-    // This must run successfully and outside the main transaction 
-    // to ensure the type exists before tables try to reference it.
+    // This must run successfully outside the main transaction 
+    // to prevent dependency errors on table creation.
     try {
         await client.query(`CREATE TYPE nature_type AS ENUM ('Asset', 'Liability', 'Income', 'Expense')`);
         console.log("✅ [db.js] Custom type 'nature_type' created.");
     } catch (e) {
+        // Error code 42710 means the type already exists. This is expected on restarts.
         if (e.code === '42710') { 
             console.log("ℹ️ [db.js] Custom type 'nature_type' already exists.");
         } else {
-             // If any other critical error occurs here, re-throw it.
-             throw e;
+             throw e; // Re-throw other errors
         }
     }
     
@@ -242,13 +245,11 @@ async function setupSingleCompanyAndAdmin(client) {
                 bcrypt.hash('admin', 10, (err, h) => err ? reject(err) : resolve(h));
             });
             
-            // Attempt to insert with ID 1 to maintain consistency if table is empty
+            // Logic to handle user ID 1 creation (or conflict update)
             let insertUserSql = `INSERT INTO users (username, password, role, email, active_company_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`;
             let insertUserParams = ['admin', hash, 'admin', 'admin@example.com', companyId];
             
-            // If the companies table wasn't empty and generated a new ID, we must insert user without explicit ID 1
             if (companyId === 1) {
-                // If company ID is 1, let's explicitly try to set user ID 1 too for the default admin.
                 insertUserSql = `INSERT INTO users (id, username, password, role, email, active_company_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET active_company_id = EXCLUDED.active_company_id RETURNING id`;
                 insertUserParams = [1, 'admin', hash, 'admin', 'admin@example.com', companyId];
             }
@@ -290,12 +291,12 @@ async function setupSingleCompanyAndAdmin(client) {
         const insertResult = await client.query(defaultCompanySql, defaultCompanyParams);
         companyId = insertResult.rows[0].id; 
         
-        if (companyId !== 1) {
-             console.warn(`⚠️ Default company generated ID ${companyId}. Expected 1. Proceeding with generated ID.`);
-        } else {
-            // Force the sequence back to 1 if we inserted ID 1, ensuring consistency
+        if (companyId === 1) {
+            // Reset sequence to 1 if we inserted ID 1, ensuring consistency for subsequent inserts
             await client.query("SELECT setval('companies_id_seq', 1, false)");
             console.log("✅ Default company (Adventurer Export) created with ID 1.");
+        } else {
+            console.warn(`⚠️ Default company generated ID ${companyId}. Expected 1. Proceeding with generated ID.`);
         }
         
         await onCompanyReady(companyId);
@@ -352,12 +353,10 @@ async function seedDefaultChartOfAccounts(client, companyId) {
                 [companyId, group.name, parentId, group.nature, group.is_default || false]
             );
 
-            // Get the ID of the inserted or existing row
             let currentId;
             if (result.rows.length > 0) {
                 currentId = result.rows[0].id;
             } else {
-                // If it was skipped due to conflict, fetch the existing ID
                 const existing = await client.query(`SELECT id FROM ledger_groups WHERE company_id = $1 AND name = $2`, [companyId, group.name]);
                 currentId = existing.rows[0].id;
             }
@@ -370,7 +369,6 @@ async function seedDefaultChartOfAccounts(client, companyId) {
         }
     }
     
-    // Start recursion with the primary children (skipping 'Primary' itself)
     await insertGroups(groups[0].children);
 
     for (const ledger of ledgers) {
