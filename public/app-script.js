@@ -1178,8 +1178,8 @@ function displayTransactions(transactionsToDisplay) {
             amountClass = ledgerAmount >= 0 ? 'positive' : 'negative';
         }
         
-        const txDate = new Date(tx.date + 'T00:00:00');
-        const formattedDate = `${String(txDate.getDate()).padStart(2, '0')}-${txDate.toLocaleString('default', { month: 'short' })}-${txDate.getFullYear()}`;
+        // FIX 1: Use formatLedgerDate helper for display
+        const formattedDate = formatLedgerDate(tx.date || tx.created_at);
 
         row.innerHTML = `
             <td>${serialNumber--}</td>
@@ -1194,6 +1194,7 @@ function displayTransactions(transactionsToDisplay) {
             </td>`;
     });
 }
+
 function showLedger(type) {
     document.getElementById("cashLedgerContent").style.display = "none";
     document.getElementById("bankLedgerContent").style.display = "none";
@@ -1248,9 +1249,14 @@ async function loadCashLedger(date = null) {
                 if (!catInfo || !catInfo.affectsLedger || !catInfo.affectsLedger.includes("cash")) return;
                 
                 let actualCashFlow = 0;
-                if (catInfo.type.includes("income")) {
+                // FIX 2: Correctly determine cash flow direction based on category type
+                if (catInfo.type.includes("income") || catInfo.group === "customer_payment") {
+                    // Income/Payment Received: Cash In (Debit, positive flow)
+                    // The transaction amount itself is usually stored as negative for customer payment (reducing receivable)
+                    // We must use the absolute value here.
                     actualCashFlow = Math.abs(parseFloat(t.amount || 0));
-                } else if (catInfo.type.includes("expense")) {
+                } else if (catInfo.type.includes("expense") || catInfo.group === "supplier_payment") {
+                    // Expense/Payment Made: Cash Out (Credit, negative flow)
                     actualCashFlow = -Math.abs(parseFloat(t.amount || 0));
                 } else if (catInfo.name === 'Cash Withdrawn from Bank') {
                     actualCashFlow = Math.abs(parseFloat(t.amount || 0));
@@ -1296,9 +1302,12 @@ async function loadCashLedger(date = null) {
                 let credit = ""; 
                 let actualCashFlowForEntry = 0;
 
-                if (catInfo.type.includes("income")) {
+                // FIX 2: Correctly determine cash flow direction based on category type
+                if (catInfo.type.includes("income") || catInfo.group === "customer_payment") {
+                     // Cash In (Debit)
                      actualCashFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
-                } else if (catInfo.type.includes("expense")) {
+                } else if (catInfo.type.includes("expense") || catInfo.group === "supplier_payment") {
+                    // Cash Out (Credit)
                     actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
                 } else if (catInfo.name === 'Cash Withdrawn from Bank') { 
                      actualCashFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
@@ -1316,6 +1325,9 @@ async function loadCashLedger(date = null) {
 
                 runningCashBalance += actualCashFlowForEntry;
 
+                // FIX 1: Use formatLedgerDate helper for date display
+                const formattedDate = formatLedgerDate(entry.date);
+
 
                 let displayName = "N/A (Business Internal)";
                 if (entry.user_id) {
@@ -1327,7 +1339,7 @@ async function loadCashLedger(date = null) {
                 }
 
                 const row = tbody.insertRow();
-                row.innerHTML = `<td>${formatLedgerDate(entry.date)}</td><td>${displayName}</td><td>${entry.description || "-"}</td><td>${entry.category || "-"}</td><td class="num positive">${debit ? "₹" + debit : ""}</td><td class="num negative">${credit ? "₹" + credit : ""}</td><td class="num ${runningCashBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${runningCashBalance.toFixed(2)}</td>`;
+                row.innerHTML = `<td>${formattedDate}</td><td>${displayName}</td><td>${entry.description || "-"}</td><td>${entry.category || "-"}</td><td class="num positive">${debit ? "₹" + debit : ""}</td><td class="num negative">${credit ? "₹" + credit : ""}</td><td class="num ${runningCashBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${runningCashBalance.toFixed(2)}</td>`;
             });
         }
         const dailyNetChange = dailyTotalDebits - dailyTotalCredits;
