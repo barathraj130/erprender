@@ -3,14 +3,11 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
 // --- POSTGRES CONFIGURATION ---
-// DATABASE_URL environment variable is provided by Render's PostgreSQL service
-// We use the provided URL as the fallback for local testing.
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://erp_iglu_user:tQ6aeuLk4FIEqsSmYFuSMV6FB4xUwqtt@dpg-d4337g7gi27c73fn0os0-a.oregon-postgres.render.com/erp_iglu";
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: {
-    // Required for Render Postgres connection
     rejectUnauthorized: false, 
   }
 });
@@ -19,7 +16,6 @@ console.log("ℹ️ [db.js] Attempting to connect to PostgreSQL...");
 
 pool.on('error', (err, client) => {
   console.error('❌ [db.js] Unexpected error on idle client', err);
-  // Do not exit in production unless absolutely necessary, but fatal here.
   process.exit(1);
 });
 
@@ -30,17 +26,14 @@ async function initializeDb() {
     console.log("✅ [db.js] Connected to the PostgreSQL database.");
     
     // --- 1. ISOLATED ENUM CREATION ---
-    // This must run successfully outside the main transaction 
-    // to prevent dependency errors on table creation.
     try {
         await client.query(`CREATE TYPE nature_type AS ENUM ('Asset', 'Liability', 'Income', 'Expense')`);
         console.log("✅ [db.js] Custom type 'nature_type' created.");
     } catch (e) {
-        // Error code 42710 means the type already exists. This is expected on restarts.
         if (e.code === '42710') { 
             console.log("ℹ️ [db.js] Custom type 'nature_type' already exists.");
         } else {
-             throw e; // Re-throw other errors
+             throw e;
         }
     }
     
@@ -322,6 +315,7 @@ async function checkAndSeedAccounts(client, companyId) {
 async function seedDefaultChartOfAccounts(client, companyId) {
     const groups = [
         { name: 'Primary', children: [
+            { name: 'Capital Account', nature: 'Liability' }, // <-- Added to fix P&L constraint
             { name: 'Current Assets', nature: 'Asset', children: [
                 { name: 'Cash-in-Hand', nature: 'Asset' }, { name: 'Bank Accounts', nature: 'Asset' },
                 { name: 'Sundry Debtors', nature: 'Asset' }, { name: 'Stock-in-Hand', nature: 'Asset' },
@@ -337,7 +331,8 @@ async function seedDefaultChartOfAccounts(client, companyId) {
         ]}
     ];
     const ledgers = [
-        { name: 'Profit & Loss A/c', is_default: true, groupName: null }, { name: 'Cash', groupName: 'Cash-in-Hand', is_default: true },
+        { name: 'Profit & Loss A/c', is_default: true, groupName: 'Capital Account' }, // <-- Assigned to Capital Account
+        { name: 'Cash', groupName: 'Cash-in-Hand', is_default: true },
         { name: 'Sales', groupName: 'Sales Accounts', is_default: true }, { name: 'Purchase', groupName: 'Purchase Accounts', is_default: true },
         { name: 'CGST', groupName: 'Duties & Taxes', is_default: true }, { name: 'SGST', groupName: 'Duties & Taxes', is_default: true },
         { name: 'IGST', groupName: 'Duties & Taxes', is_default: true },
@@ -373,6 +368,12 @@ async function seedDefaultChartOfAccounts(client, companyId) {
 
     for (const ledger of ledgers) {
         const groupId = ledger.groupName ? groupMap.get(ledger.groupName) : null;
+        if (!groupId && ledger.name !== 'Profit & Loss A/c') {
+             // Safety check: All standard ledgers MUST have a group ID now.
+             console.error(`Skipping ledger insert for ${ledger.name}: Missing required group ID.`);
+             continue;
+        }
+
         await client.query(
             'INSERT INTO ledgers (company_id, name, group_id, is_default) VALUES ($1, $2, $3, $4) ON CONFLICT (company_id, name) DO NOTHING', 
             [companyId, ledger.name, groupId, ledger.is_default || false]
