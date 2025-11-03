@@ -1,16 +1,16 @@
 // routes/inventoryRoutes.js
 const express = require('express');
 const router = express.Router();
-// --- PG FIX: Import pool for helper function ---
 const { pool } = require('../db'); 
 
-// Paste this near the top of every route file:
 async function dbQuery(sql, params = []) {
     let client;
     try {
         client = await pool.connect();
         const result = await client.query(sql, params);
-        return result.rows;
+        const rows = result.rows;
+        rows.rowCount = result.rowCount; 
+        return rows;
     } catch (e) {
         console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
         throw e;
@@ -73,6 +73,7 @@ router.get('/items', async (req, res) => {
     const companyId = req.user.active_company_id;
     if (!companyId) return res.status(400).json({ error: "No active company selected." });
 
+    // Note: COALESCE is the PG equivalent of IFNULL
     const sql = `
         SELECT i.*, u.name as unit_name,
         (i.opening_qty + COALESCE((SELECT SUM(vi.quantity) FROM voucher_inventory_entries vi WHERE vi.item_id = i.id), 0)) as current_stock
@@ -81,7 +82,7 @@ router.get('/items', async (req, res) => {
         WHERE i.company_id = $1
         ORDER BY i.name
     `;
-    // NOTE: SQLite IFNULL changed to PG COALESCE
+    
     try {
         const rows = await dbQuery(sql, [companyId]);
         res.json(rows || []);

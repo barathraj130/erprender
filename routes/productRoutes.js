@@ -8,7 +8,10 @@ async function dbQuery(sql, params = []) {
     try {
         client = await pool.connect();
         const result = await client.query(sql, params);
-        return result.rows;
+        // Ensure rowCount is attached to rows for consistency in UPDATE/DELETE checks
+        const rows = result.rows;
+        rows.rowCount = result.rowCount; 
+        return rows;
     } catch (e) {
         console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
         throw e;
@@ -46,17 +49,16 @@ router.get('/', async (req, res) => {
     // FIX 1: Use boolean literal TRUE for PG
     const activeFilter = !showInactive ? 'AND p.is_active = TRUE' : '';
     
+    // FIX 2 & 3: Use boolean literal TRUE in subqueries and STRING_AGG for concatenation
     const sql = `
         SELECT
             p.*,
             (SELECT l.lender_name 
              FROM product_suppliers ps_pref 
              JOIN lenders l ON ps_pref.supplier_id = l.id 
-             -- FIX 2: Use boolean literal TRUE for PG
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = TRUE LIMIT 1) as preferred_supplier_name,
             (SELECT ps_pref.purchase_price 
              FROM product_suppliers ps_pref 
-             -- FIX 3: Use boolean literal TRUE for PG
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = TRUE LIMIT 1) as preferred_supplier_purchase_price
         FROM products p
         WHERE p.company_id = $1 ${activeFilter}
