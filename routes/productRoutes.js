@@ -193,7 +193,7 @@ router.put('/:id', async (req, res) => {
     const params = [
         product_name, sku || null, description || null, parsedCostPrice, parsedSalePrice, parsedCurrentStock,
         unit_of_measure || 'pcs', low_stock_threshold ? parseInt(low_stock_threshold) : 0, hsn_acs_code || null,
-        reorder_level ? parseInt(reorder_level) : 0, (is_active === 0 || is_active === false) ? 0 : 1, id, companyId // FIXED: Ensure is_active is 0 or 1
+        reorder_level ? parseInt(reorder_level) : 0, (is_active === 0 || is_active === false) ? 0 : 1, id, companyId
     ];
 
     try {
@@ -224,20 +224,22 @@ router.delete('/:id', async (req, res) => {
     if (!companyId) return res.status(400).json({ error: "Could not identify the company for this operation." });
 
     try {
-        // 1. Check Usage 
+        // 1. Check Usage (This proactively blocks if product is tied to transactions/invoices)
         const checkTxSql = 'SELECT COUNT(*) as count FROM transaction_line_items WHERE product_id = $1';
         const checkInvSql = 'SELECT COUNT(*) as count FROM invoice_line_items WHERE product_id = $1';
         
         const txCount = await dbQuery(checkTxSql, [id]).then(rows => parseInt(rows[0].count, 10));
         const invCount = await dbQuery(checkInvSql, [id]).then(rows => parseInt(rows[0].count, 10));
 
+        // NOTE: These checks are required because we do not have ON DELETE CASCADE on product_id 
+        // in transaction_line_items or invoice_line_items, preventing hard deletion of historical data.
         if (txCount > 0) return res.status(400).json({ error: "Cannot delete product. It is used in existing financial transactions. Consider deactivating it instead." });
         if (invCount > 0) return res.status(400).json({ error: "Cannot delete product. It is used in existing invoices. Consider deactivating it or removing it from invoices first." });
             
         client = await pool.connect();
         await client.query("BEGIN");
         
-        // 2. Delete product links 
+        // 2. Delete product links (ON DELETE CASCADE in DB setup)
         await client.query('DELETE FROM product_suppliers WHERE product_id = $1', [id]);
 
         // 3. Delete Product
@@ -253,6 +255,12 @@ router.delete('/:id', async (req, res) => {
 
     } catch (error) {
         if (client) await client.query("ROLLBACK");
+        
+        // Provide a clearer error message for unexpected FK failure (though the explicit checks should prevent most)
+        if (error.code === '23503') { 
+            return res.status(400).json({ error: 'Cannot delete product. It is still referenced in other sales or inventory records. Please deactivate it instead.' });
+        }
+
         console.error("Error deleting product:", error.message);
         return res.status(500).json({ error: "Failed to delete product." });
     } finally {

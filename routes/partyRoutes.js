@@ -39,9 +39,6 @@ function convertToCsv(data, headers) {
     return [headerRow, ...dataRows].join('\n');
 }
 
-// NOTE: The synchronous 'seedChartOfAccountsIfNeeded' helper has been removed, 
-// as PostgreSQL seeding is handled asynchronously in db.js on server startup.
-
 // GET /api/users - Get all users (parties) for the active company
 router.get('/', async (req, res) => {
     const companyId = req.user.active_company_id;
@@ -212,23 +209,39 @@ router.delete('/:id', async (req, res) => {
     let client;
 
     try {
-        const userCheckRows = await dbQuery('SELECT username FROM users WHERE id = $1', [id]);
+        const userCheckRows = await dbQuery('SELECT username, role FROM users WHERE id = $1', [id]);
         const user = userCheckRows[0];
         if (!user) return res.status(404).json({ message: "User to delete not found." });
         
+        // Prevent deleting admin account
+        if (user.role === 'admin') {
+            return res.status(403).json({ error: "Cannot delete the primary admin account." });
+        }
+
         const ledgerNameToDelete = user.username;
 
         client = await pool.connect();
         await client.query("BEGIN");
-            
-        // 1. Delete Ledger (Must succeed first as it might be referenced)
+        
+        // 1. Check for constraints that ARE NOT ON DELETE SET NULL/CASCADE
+        
+        // Check if user is referenced in invoices (FK is ON DELETE RESTRICT by default if not specified)
+        const invoiceCountRows = await client.query('SELECT COUNT(*) as count FROM invoices WHERE customer_id = $1', [id]);
+        if (parseInt(invoiceCountRows.rows[0].count) > 0) {
+             await client.query("ROLLBACK");
+             return res.status(400).json({ error: 'Cannot delete party. They are linked to existing invoices. Delete invoices first.' });
+        }
+        
+        // 2. Transactions.user_id has ON DELETE SET NULL, so this is safe.
+        // 3. user_companies.user_id has ON DELETE CASCADE, so this is safe.
+
+        // 4. Delete Ledger
         const ledgerDeleteResult = await client.query("DELETE FROM ledgers WHERE name = $1 AND company_id = $2", [ledgerNameToDelete, companyId]);
         
-        // 2. Delete User (CASCADE handles user_companies)
+        // 5. Delete User (Triggers cascade delete on user_companies, sets user_id to null on transactions)
         const userDeleteResult = await client.query("DELETE FROM users WHERE id = $1", [id]);
 
         if (userDeleteResult.rowCount === 0) {
-            // Should not happen if user was found in step 1, but safe check
             await client.query("ROLLBACK");
             return res.status(404).json({ message: 'User not found or already deleted.' });
         }
@@ -238,8 +251,17 @@ router.delete('/:id', async (req, res) => {
 
     } catch (err) {
         if (client) await client.query("ROLLBACK");
+        
+        // Handle specific constraint errors better
+        if (err.code === '23503') { // foreign_key_violation
+            if (err.constraint.includes('voucher_entries_ledger_id_fkey')) {
+                 return res.status(400).json({ error: 'Cannot delete party. The associated ledger is used in existing vouchers (Journal, Payment, Receipt, etc.). Delete all related vouchers first.' });
+            }
+             return res.status(400).json({ error: `Failed to delete records due to related accounting entries. Delete all related transactions/vouchers first. Details: ${err.message}` });
+        }
+
         console.error("PG DELETE User/Party Error:", err.message);
-        return res.status(500).json({ error: 'Failed to delete records.', details: err.message });
+        return res.status(500).json({ error: 'Failed to delete records. An internal constraint error occurred.', details: err.message });
     } finally {
         if (client) client.release();
     }
