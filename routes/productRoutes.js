@@ -98,7 +98,6 @@ router.get('/:id', async (req, res) => {
             WHERE ps.product_id = $1 AND l.entity_type = 'Supplier'
             ORDER BY ps.is_preferred DESC, l.lender_name ASC
         `;
-        // Note: is_preferred column in this SELECT is used for ordering, but PG handles boolean comparison in ORDER BY correctly.
         const supplierRows = await dbQuery(suppliersSql, [productId]);
         
         productData.suppliers = supplierRows || [];
