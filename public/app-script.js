@@ -1217,12 +1217,15 @@ function showLedger(type) {
     }
 }
 async function loadCashLedger(date = null) {
+    // Determine the selected date string (YYYY-MM-DD)
     const selectedDate =
         date ||
         document.getElementById("cashLedgerDate")?.value ||
         new Date().toISOString().split("T")[0];
     const ledgerDateElem = document.getElementById("cashLedgerDate");
-    if (ledgerDateElem) ledgerDateElem.value = selectedDate;
+    
+    // Ensure the date input field is updated with the standardized format (YYYY-MM-DD)
+    if (ledgerDateElem) ledgerDateElem.value = selectedDate; 
 
     const table = document.getElementById("cashLedgerTable");
     if (!table) return;
@@ -1239,9 +1242,16 @@ async function loadCashLedger(date = null) {
         if(allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
         if(externalEntitiesCache.length === 0 && !isLoading.lenders) await loadLenders();
 
+        // Normalize selected date for consistent comparison (YYYY-MM-DD)
+        const selectedDateNormalized = new Date(selectedDate).toISOString().split("T")[0];
+
         let openingCashBalance = 0;
         allTransactionsCache
-            .filter((t) => new Date(t.date) < new Date(selectedDate))
+            .filter((t) => {
+                const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
+                // Compare date string up to the day
+                return txDateNormalized && txDateNormalized < selectedDateNormalized;
+            })
             .forEach((t) => {
                 const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
@@ -1249,11 +1259,10 @@ async function loadCashLedger(date = null) {
                 if (!catInfo || !catInfo.affectsLedger || !catInfo.affectsLedger.includes("cash")) return;
                 
                 let actualCashFlow = 0;
-                // FIX 2: Correctly determine cash flow direction based on category type
+                
+                // FIX: Correctly determine cash flow direction based on category type
                 if (catInfo.type.includes("income") || catInfo.group === "customer_payment") {
                     // Income/Payment Received: Cash In (Debit, positive flow)
-                    // The transaction amount itself is usually stored as negative for customer payment (reducing receivable)
-                    // We must use the absolute value here.
                     actualCashFlow = Math.abs(parseFloat(t.amount || 0));
                 } else if (catInfo.type.includes("expense") || catInfo.group === "supplier_payment") {
                     // Expense/Payment Made: Cash Out (Credit, negative flow)
@@ -1268,11 +1277,13 @@ async function loadCashLedger(date = null) {
         
         const entries = allTransactionsCache
             .filter((t) => {
+                const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
                 const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
                 );
+                // Compare against the normalized date string
                 return (
-                    t.date === selectedDate &&
+                    txDateNormalized === selectedDateNormalized &&
                     catInfo &&
                     catInfo.affectsLedger &&
                     catInfo.affectsLedger.includes("cash")
@@ -1283,6 +1294,7 @@ async function loadCashLedger(date = null) {
 
         tbody.innerHTML = "";
         const openingRow = tbody.insertRow();
+        // Use formatLedgerDate for display consistency
         openingRow.innerHTML = `<td>${formatLedgerDate(selectedDate)}</td><td colspan="3">Opening Cash Balance</td><td></td><td></td><td class="num ${openingCashBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${openingCashBalance.toFixed(2)}</td>`;
 
 
@@ -1302,7 +1314,7 @@ async function loadCashLedger(date = null) {
                 let credit = ""; 
                 let actualCashFlowForEntry = 0;
 
-                // FIX 2: Correctly determine cash flow direction based on category type
+                // FIX: Correctly determine cash flow direction based on category type
                 if (catInfo.type.includes("income") || catInfo.group === "customer_payment") {
                      // Cash In (Debit)
                      actualCashFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
@@ -1325,7 +1337,7 @@ async function loadCashLedger(date = null) {
 
                 runningCashBalance += actualCashFlowForEntry;
 
-                // FIX 1: Use formatLedgerDate helper for date display
+                // Use formatLedgerDate helper for date display
                 const formattedDate = formatLedgerDate(entry.date);
 
 
