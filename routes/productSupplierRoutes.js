@@ -8,7 +8,9 @@ async function dbQuery(sql, params = []) {
     try {
         client = await pool.connect();
         const result = await client.query(sql, params);
-        return result.rows;
+        const rows = result.rows;
+        rows.rowCount = result.rowCount; 
+        return rows;
     } catch (e) {
         console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
         throw e;
@@ -21,7 +23,7 @@ async function createInitialStockTransaction(productId, supplierId, purchasePric
     console.log(`[AUTO-TX] Checking if initial stock transaction is needed for Product ID: ${productId}, Supplier ID: ${supplierId}`);
     
     try {
-        // Step 1: Get the product's current stock.
+        // Step 1: Get the product's current stock and company ID.
         const productRows = await dbQuery('SELECT current_stock, company_id FROM products WHERE id = $1', [productId]);
         const product = productRows[0];
             
@@ -131,7 +133,7 @@ router.post('/', async (req, res) => {
         product_id, supplier_id, supplier_sku || null, 
         finalPurchasePrice, 
         lead_time_days ? parseInt(lead_time_days) : null,
-        is_preferred || false,
+        is_preferred || false, // PG treats this as BOOLEAN
         notes || null
     ];
     
@@ -169,7 +171,8 @@ router.put('/:productSupplierId', async (req, res) => {
     const params = [
         supplier_sku || null, finalPurchasePrice, 
         lead_time_days ? parseInt(lead_time_days) : null,
-        is_preferred || false, notes || null, productSupplierId
+        is_preferred || false, // PG treats this as BOOLEAN
+        notes || null, productSupplierId
     ];
     
     try {
