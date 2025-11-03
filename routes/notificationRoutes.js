@@ -2,7 +2,20 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
+// Paste this near the top of every route file:
+async function dbQuery(sql, params = []) {
+    let client;
+    try {
+        client = await pool.connect();
+        const result = await client.query(sql, params);
+        return result.rows;
+    } catch (e) {
+        console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+        throw e;
+    } finally {
+        if (client) client.release();
+    }
+}
 // GET /api/notifications - Fetch unread notifications for the logged-in user
 // For now, we will fetch all global (user_id IS NULL) unread notifications.
 router.get('/', (req, res) => {

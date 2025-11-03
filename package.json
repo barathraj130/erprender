@@ -6,7 +6,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
     "preinstall": "npm cache clean --force",
-    "postinstall": "npm rebuild sqlite3" 
+    "postinstall": "echo 'PostgreSQL setup complete, no native rebuild needed.'"
   },
   "keywords": [],
   "author": "",
@@ -22,7 +22,7 @@
     "google-spreadsheet": "^4.1.4",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.1.0",
-    "sqlite3": "^5.1.7"
+    "pg": "^8.11.5"  
   },
   "description": ""
 }

@@ -1,42 +1,48 @@
 // db.js
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
-// --- RENDER PERMANENT STORAGE FIX ---
-// Use a fixed path suitable for mounting a Render Persistent Disk in production.
-const DB_FILE_NAME = 'database.sqlite';
-const RENDER_DB_PATH = path.join(__dirname, DB_FILE_NAME); 
-const DB_PATH = (process.env.NODE_ENV === 'production' && process.env.RENDER) 
-    ? path.join('/var/data', DB_FILE_NAME) 
-    : RENDER_DB_PATH;
-// -------------------------------------
+// --- POSTGRES CONFIGURATION ---
+const DATABASE_URL = process.env.DATABASE_URL || "postgresql://erp_iglu_user:tQ6aeuLk4FIEqsSmYFuSMV6FB4xUwqtt@dpg-d4337g7gi27c73fn0os0-a/erp_iglu";
 
-let dbInitialized = false;
-
-console.log("ℹ️ [db.js] Attempting to open database at:", DB_PATH);
-const db = new sqlite3.Database(DB_PATH, (err) => {
-  if (err) {
-    console.error("❌ [db.js] Error opening database:", err.message);
-    process.exit(1);
-  } else {
-    console.log("✅ [db.js] Connected to the SQLite database.");
-    initializeDb();
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: {
+    // Required for Render Postgres connection
+    rejectUnauthorized: false, 
   }
 });
 
-function initializeDb() {
-  if (dbInitialized) return;
-  console.log("ℹ️ [db.js] Starting database initialization...");
-  
-  db.serialize(() => {
+console.log("ℹ️ [db.js] Attempting to connect to PostgreSQL...");
+
+pool.on('error', (err, client) => {
+  console.error('❌ [db.js] Unexpected error on idle client', err);
+  process.exit(1);
+});
+
+async function initializeDb() {
+  let client;
+  try {
+    client = await pool.connect();
+    console.log("✅ [db.js] Connected to the PostgreSQL database.");
+    
+    // Begin transaction for initialization
+    await client.query('BEGIN');
+
+    console.log("ℹ️ [db.js] Starting database initialization (creating tables)...");
+    
+    // --- NOTE ON SYNTAX ---
+    // PostgreSQL uses SERIAL for auto-increment and double quotes for case-sensitive names,
+    // although we will stick to lowercase names for simplicity.
+    // FOREIGN KEY constraints and data types are adjusted.
+
     const createTableStatements = [
-        `CREATE TABLE IF NOT EXISTS companies (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT NOT NULL UNIQUE, address_line1 TEXT, address_line2 TEXT, city_pincode TEXT, state TEXT, gstin TEXT UNIQUE, state_code TEXT, phone TEXT, email TEXT UNIQUE, bank_name TEXT, bank_account_no TEXT, bank_ifsc_code TEXT, logo_url TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-        `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, email TEXT UNIQUE, password TEXT, role TEXT NOT NULL DEFAULT 'user', phone TEXT, company TEXT, initial_balance REAL NOT NULL DEFAULT 0, address_line1 TEXT, address_line2 TEXT, city_pincode TEXT, state TEXT, gstin TEXT, state_code TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, active_company_id INTEGER, FOREIGN KEY(active_company_id) REFERENCES companies(id) ON DELETE SET NULL)`,
-        `CREATE TABLE IF NOT EXISTS user_companies (user_id INTEGER NOT NULL, company_id INTEGER NOT NULL, PRIMARY KEY (user_id, company_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE)`,
-        `CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            company_id INTEGER NOT NULL,
+      `CREATE TABLE IF NOT EXISTS "companies" (id SERIAL PRIMARY KEY, company_name TEXT UNIQUE NOT NULL, address_line1 TEXT, address_line2 TEXT, city_pincode TEXT, state TEXT, gstin TEXT UNIQUE, state_code TEXT, phone TEXT, email TEXT UNIQUE, bank_name TEXT, bank_account_no TEXT, bank_ifsc_code TEXT, logo_url TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE TABLE IF NOT EXISTS "users" (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, email TEXT UNIQUE, password TEXT, role TEXT NOT NULL DEFAULT 'user', phone TEXT, company TEXT, initial_balance REAL NOT NULL DEFAULT 0, address_line1 TEXT, address_line2 TEXT, city_pincode TEXT, state TEXT, gstin TEXT, state_code TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, active_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL)`,
+      `CREATE TABLE IF NOT EXISTS "user_companies" (user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE, PRIMARY KEY (user_id, company_id))`,
+      `CREATE TABLE IF NOT EXISTS "products" (
+            id SERIAL PRIMARY KEY, 
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
             product_name TEXT NOT NULL, 
             sku TEXT, 
             description TEXT, 
@@ -48,28 +54,32 @@ function initializeDb() {
             low_stock_threshold INTEGER DEFAULT 0, 
             reorder_level INTEGER DEFAULT 0, 
             is_active INTEGER DEFAULT 1 NOT NULL, 
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, 
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(company_id, product_name),
             UNIQUE(company_id, sku)
         )`,
-        `CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, user_id_acting INTEGER, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id INTEGER, details_before TEXT, details_after TEXT, ip_address TEXT, FOREIGN KEY (user_id_acting) REFERENCES users(id) ON DELETE SET NULL)`,
-        `CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, message TEXT NOT NULL, type TEXT DEFAULT 'info', link TEXT, is_read BOOLEAN DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)`,
-        `CREATE TABLE IF NOT EXISTS ledger_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, name TEXT NOT NULL, parent_id INTEGER, nature TEXT CHECK(nature IN ('Asset', 'Liability', 'Income', 'Expense')), is_default BOOLEAN DEFAULT 0, UNIQUE(company_id, name), FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE, FOREIGN KEY(parent_id) REFERENCES ledger_groups(id) ON DELETE CASCADE)`,
-        `CREATE TABLE IF NOT EXISTS ledgers (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, name TEXT NOT NULL, group_id INTEGER NOT NULL, opening_balance REAL DEFAULT 0, is_dr BOOLEAN DEFAULT 1, gstin TEXT, state TEXT, is_default BOOLEAN DEFAULT 0, UNIQUE(company_id, name), FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE, FOREIGN KEY(group_id) REFERENCES ledger_groups(id) ON DELETE RESTRICT)`,
-        `CREATE TABLE IF NOT EXISTS stock_units (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, name TEXT NOT NULL, UNIQUE(company_id, name), FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE)`,
-        `CREATE TABLE IF NOT EXISTS stock_warehouses (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, name TEXT NOT NULL, is_default BOOLEAN DEFAULT 0, UNIQUE(company_id, name), FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE)`,
-        `CREATE TABLE IF NOT EXISTS stock_items (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, name TEXT NOT NULL, unit_id INTEGER NOT NULL, gst_rate REAL DEFAULT 0, opening_qty REAL DEFAULT 0, opening_rate REAL DEFAULT 0, UNIQUE(company_id, name), FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE, FOREIGN KEY(unit_id) REFERENCES stock_units(id) ON DELETE RESTRICT)`,
-        `CREATE TABLE IF NOT EXISTS vouchers (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, date TEXT NOT NULL, voucher_number TEXT NOT NULL, voucher_type TEXT NOT NULL, narration TEXT, total_amount REAL NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, created_by_user_id INTEGER, UNIQUE(company_id, voucher_number, voucher_type), FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE, FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE SET NULL)`,
-        `CREATE TABLE IF NOT EXISTS voucher_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_id INTEGER NOT NULL, ledger_id INTEGER NOT NULL, debit REAL DEFAULT 0, credit REAL DEFAULT 0, FOREIGN KEY(voucher_id) REFERENCES vouchers(id) ON DELETE CASCADE, FOREIGN KEY(ledger_id) REFERENCES ledgers(id) ON DELETE RESTRICT)`,
-        `CREATE TABLE IF NOT EXISTS voucher_inventory_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, voucher_id INTEGER NOT NULL, item_id INTEGER NOT NULL, warehouse_id INTEGER, quantity REAL NOT NULL, rate REAL NOT NULL, amount REAL NOT NULL, FOREIGN KEY(voucher_id) REFERENCES vouchers(id) ON DELETE CASCADE, FOREIGN KEY(item_id) REFERENCES stock_items(id) ON DELETE RESTRICT, FOREIGN KEY(warehouse_id) REFERENCES stock_warehouses(id) ON DELETE SET NULL)`,
-        `CREATE TABLE IF NOT EXISTS invoices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_id INTEGER NOT NULL,
+      `CREATE TABLE IF NOT EXISTS "audit_log" (id SERIAL PRIMARY KEY, timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, user_id_acting INTEGER REFERENCES users(id) ON DELETE SET NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id INTEGER, details_before TEXT, details_after TEXT, ip_address TEXT)`,
+      `CREATE TABLE IF NOT EXISTS "notifications" (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, message TEXT NOT NULL, type TEXT DEFAULT 'info', link TEXT, is_read BOOLEAN DEFAULT FALSE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)`,
+      // Ledger tables
+      `CREATE TYPE nature_type AS ENUM ('Asset', 'Liability', 'Income', 'Expense')`,
+      `CREATE TABLE IF NOT EXISTS "ledger_groups" (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, parent_id INTEGER REFERENCES ledger_groups(id) ON DELETE CASCADE, nature nature_type, is_default BOOLEAN DEFAULT FALSE, UNIQUE(company_id, name))`,
+      `CREATE TABLE IF NOT EXISTS "ledgers" (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, group_id INTEGER NOT NULL REFERENCES ledger_groups(id) ON DELETE RESTRICT, opening_balance REAL DEFAULT 0, is_dr BOOLEAN DEFAULT TRUE, gstin TEXT, state TEXT, is_default BOOLEAN DEFAULT FALSE, UNIQUE(company_id, name))`,
+      // Inventory tables
+      `CREATE TABLE IF NOT EXISTS "stock_units" (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, UNIQUE(company_id, name))`,
+      `CREATE TABLE IF NOT EXISTS "stock_warehouses" (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, is_default BOOLEAN DEFAULT FALSE, UNIQUE(company_id, name))`,
+      `CREATE TABLE IF NOT EXISTS "stock_items" (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, unit_id INTEGER NOT NULL REFERENCES stock_units(id) ON DELETE RESTRICT, gst_rate REAL DEFAULT 0, opening_qty REAL DEFAULT 0, opening_rate REAL DEFAULT 0, UNIQUE(company_id, name))`,
+      // Voucher tables
+      `CREATE TABLE IF NOT EXISTS "vouchers" (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, date DATE NOT NULL, voucher_number TEXT NOT NULL, voucher_type TEXT NOT NULL, narration TEXT, total_amount REAL NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, UNIQUE(company_id, voucher_number, voucher_type))`,
+      `CREATE TABLE IF NOT EXISTS "voucher_entries" (id SERIAL PRIMARY KEY, voucher_id INTEGER NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE, ledger_id INTEGER NOT NULL REFERENCES ledgers(id) ON DELETE RESTRICT, debit REAL DEFAULT 0, credit REAL DEFAULT 0)`,
+      `CREATE TABLE IF NOT EXISTS "voucher_inventory_entries" (id SERIAL PRIMARY KEY, voucher_id INTEGER NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE, item_id INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE RESTRICT, warehouse_id INTEGER REFERENCES stock_warehouses(id) ON DELETE SET NULL, quantity REAL NOT NULL, rate REAL NOT NULL, amount REAL NOT NULL)`,
+      // Invoice tables
+      `CREATE TABLE IF NOT EXISTS "invoices" (
+            id SERIAL PRIMARY KEY,
+            customer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
             invoice_number TEXT NOT NULL,
-            invoice_date TEXT NOT NULL,
-            due_date TEXT NOT NULL,
+            invoice_date DATE NOT NULL,
+            due_date DATE NOT NULL,
             total_amount REAL NOT NULL DEFAULT 0,
             amount_before_tax REAL NOT NULL DEFAULT 0,
             total_cgst_amount REAL DEFAULT 0,
@@ -83,7 +93,7 @@ function initializeDb() {
             reverse_charge TEXT DEFAULT 'No',
             transportation_mode TEXT,
             vehicle_number TEXT,
-            date_of_supply TEXT,
+            date_of_supply DATE,
             place_of_supply_state TEXT,
             place_of_supply_state_code TEXT,
             bundles_count INTEGER,
@@ -96,17 +106,15 @@ function initializeDb() {
             consignee_state_code TEXT,
             amount_in_words TEXT,
             original_invoice_number TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            company_id INTEGER NOT NULL,
-            FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE RESTRICT,
-            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
             UNIQUE(company_id, invoice_number)
         )`,
-        `CREATE TABLE IF NOT EXISTS invoice_line_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            invoice_id INTEGER NOT NULL,
-            product_id INTEGER,
+      `CREATE TABLE IF NOT EXISTS "invoice_line_items" (
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+            product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
             description TEXT NOT NULL,
             hsn_acs_code TEXT,
             unit_of_measure TEXT,
@@ -120,40 +128,12 @@ function initializeDb() {
             sgst_amount REAL DEFAULT 0,
             igst_rate REAL DEFAULT 0,
             igst_amount REAL DEFAULT 0,
-            line_total REAL NOT NULL,
-            FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
-            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+            line_total REAL NOT NULL
         )`,
-        `CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER,
-            user_id INTEGER,
-            lender_id INTEGER,
-            agreement_id INTEGER,
-            amount REAL NOT NULL,
-            description TEXT,
-            category TEXT,
-            date TEXT NOT NULL,
-            related_invoice_id INTEGER,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
-            FOREIGN KEY (lender_id) REFERENCES lenders(id) ON DELETE SET NULL,
-            FOREIGN KEY (agreement_id) REFERENCES business_agreements(id) ON DELETE SET NULL,
-            FOREIGN KEY (related_invoice_id) REFERENCES invoices(id) ON DELETE SET NULL
-        )`,
-        `CREATE TABLE IF NOT EXISTS transaction_line_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            transaction_id INTEGER NOT NULL,
-            product_id INTEGER NOT NULL,
-            quantity REAL NOT NULL,
-            unit_sale_price REAL,
-            FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
-            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-        )`,
-        `CREATE TABLE IF NOT EXISTS lenders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER,
+      // Finance tables (Lenders, Agreements, Transactions)
+      `CREATE TABLE IF NOT EXISTS "lenders" (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
             lender_name TEXT NOT NULL,
             entity_type TEXT DEFAULT 'General',
             contact_person TEXT,
@@ -161,140 +141,181 @@ function initializeDb() {
             email TEXT,
             notes TEXT,
             initial_payable_balance REAL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(company_id, lender_name),
-            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(company_id, lender_name)
         )`,
-        `CREATE TABLE IF NOT EXISTS business_agreements (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER,
-            lender_id INTEGER NOT NULL,
+      `CREATE TABLE IF NOT EXISTS "business_agreements" (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+            lender_id INTEGER NOT NULL REFERENCES lenders(id) ON DELETE CASCADE,
             agreement_type TEXT NOT NULL,
             total_amount REAL NOT NULL,
             interest_rate REAL DEFAULT 0,
-            start_date TEXT NOT NULL,
+            start_date DATE NOT NULL,
             details TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
-            FOREIGN KEY (lender_id) REFERENCES lenders(id) ON DELETE CASCADE
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         )`,
-         `CREATE TABLE IF NOT EXISTS product_suppliers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id INTEGER NOT NULL,
-            supplier_id INTEGER NOT NULL,
+      `CREATE TABLE IF NOT EXISTS "transactions" (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            lender_id INTEGER REFERENCES lenders(id) ON DELETE SET NULL,
+            agreement_id INTEGER REFERENCES business_agreements(id) ON DELETE SET NULL,
+            amount REAL NOT NULL,
+            description TEXT,
+            category TEXT,
+            date DATE NOT NULL,
+            related_invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )`,
+      `CREATE TABLE IF NOT EXISTS "transaction_line_items" (
+            id SERIAL PRIMARY KEY,
+            transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            quantity REAL NOT NULL,
+            unit_sale_price REAL
+        )`,
+      `CREATE TABLE IF NOT EXISTS "product_suppliers" (
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            supplier_id INTEGER NOT NULL REFERENCES lenders(id) ON DELETE CASCADE,
             supplier_sku TEXT,
             purchase_price REAL,
             lead_time_days INTEGER,
-            is_preferred BOOLEAN DEFAULT 0,
+            is_preferred BOOLEAN DEFAULT FALSE,
             notes TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-            FOREIGN KEY (supplier_id) REFERENCES lenders(id) ON DELETE CASCADE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(product_id, supplier_id)
         )`
     ];
-    createTableStatements.forEach(stmt => db.run(stmt, (err) => {
-        if (err) console.error("❌ [db.js] Error creating a table:", err.message);
-    }));
+    
+    // Execute statements sequentially or in parallel (pg is parallel, but we need
+    // to handle the nature_type first, so we use a loop with await).
+    
+    // --- Special handling for ENUM type creation ---
+    try {
+        await client.query(`SELECT 1 FROM pg_type WHERE typname = 'nature_type'`);
+    } catch (e) {
+        // If query fails (meaning type doesn't exist), create it.
+        await client.query(`CREATE TYPE nature_type AS ENUM ('Asset', 'Liability', 'Income', 'Expense')`);
+    }
 
-    setupSingleCompanyAndAdmin();
-  });
+    for (const stmt of createTableStatements) {
+      if (!stmt.includes('CREATE TYPE')) { // Skip the ENUM creation as it was done above
+         await client.query(stmt);
+      }
+    }
+
+    await setupSingleCompanyAndAdmin(client);
+
+    await client.query('COMMIT');
+    console.log("✅ [db.js] Database initialization complete.");
+    
+  } catch (err) {
+    console.error("❌ [db.js] Database initialization FAILED:", err.message);
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+        console.log('ℹ️ [db.js] Initialization rollback successful.');
+      } catch (rollbackErr) {
+        console.error('❌ [db.js] Failed to rollback initialization transaction:', rollbackErr.message);
+      }
+    }
+    process.exit(1);
+  } finally {
+    if (client) client.release();
+  }
 }
 
-function setupSingleCompanyAndAdmin() {
+async function setupSingleCompanyAndAdmin(client) {
     console.log("ℹ️ [db.js] Ensuring default company (ID 1) and admin user exist...");
 
-    db.get("SELECT id FROM companies WHERE id = 1", (err, companyRow) => {
-        if (err) return console.error("❌ Error checking for default company:", err.message);
+    const companyCheck = await client.query("SELECT id FROM companies WHERE id = 1");
+    let companyId = 1;
 
-        const onCompanyReady = (companyId) => {
-            checkAndSeedAccounts(companyId, () => {
-                db.get("SELECT id FROM users WHERE username = 'admin'", (userErr, userRow) => {
-                    if (userErr) return console.error("❌ Error checking for admin user:", userErr.message);
-
-                    if (!userRow) {
-                        console.log("ℹ️ No admin user found, creating one for company ID:", companyId);
-                        bcrypt.hash('admin', 10, (hashErr, hash) => {
-                            if (hashErr) return console.error("❌ Error hashing default password:", hashErr);
-                            
-                            db.run(`INSERT INTO users (username, password, role, email, active_company_id) VALUES (?, ?, ?, ?, ?)`, 
-                                ['admin', hash, 'admin', 'admin@example.com', companyId], function(insertUserErr) {
-                                if (insertUserErr) return console.error("❌ Error creating default admin:", insertUserErr.message);
-                                
-                                const adminId = this.lastID;
-                                db.run(`INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)`, [adminId, companyId], (linkErr) => {
-                                    if (linkErr) console.error("❌ Error linking admin to company:", linkErr.message);
-                                    else console.log("✅ Default admin user created and linked to company.");
-                                });
-                            });
-                        });
-                    } else {
-                        db.run(`INSERT OR IGNORE INTO user_companies (user_id, company_id) VALUES (?, ?)`, [userRow.id, companyId]);
-                        db.run(`UPDATE users SET active_company_id = ? WHERE id = ?`, [companyId, userRow.id]);
-                        console.log("ℹ️ Default admin user already exists. Ensured link to company 1.");
-                    }
-                });
-                dbInitialized = true;
-                console.log("✅ [db.js] Database initialization complete.");
+    const onCompanyReady = async (companyId) => {
+        await checkAndSeedAccounts(client, companyId);
+        
+        const userCheck = await client.query("SELECT id FROM users WHERE username = 'admin'");
+        
+        if (userCheck.rows.length === 0) {
+            console.log("ℹ️ No admin user found, creating one for company ID:", companyId);
+            const hash = await new Promise((resolve, reject) => {
+                bcrypt.hash('admin', 10, (err, h) => err ? reject(err) : resolve(h));
             });
-        };
-
-        if (!companyRow) {
-            const defaultCompanySql = `INSERT INTO companies (id, company_name, address_line1, address_line2, city_pincode, state, state_code, gstin, phone, email, bank_name, bank_account_no, bank_ifsc_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-            const defaultCompanyParams = [
-                1, 
-                "ADVENTURER EXPORT", 
-                "3/2B, Nesavalar Colony, 2nd Street, PN Road",
-                "",
-                "TIRUPUR - 641602", 
-                "TAMILNADU", 
-                "33",
-                "33ABCFA3111D1ZF", 
-                "9791902205, 9842880404", 
-                "contact@adventurerexport.com",
-                "ICICI Bank",
-                "106105501618",
-                "ICIC0001061"
-            ];
             
-            db.run(defaultCompanySql, defaultCompanyParams, function(companyErr) {
-                if (companyErr) return console.error("❌ Error creating default company:", companyErr.message);
-                
-                console.log("✅ Default company (Adventurer Export) created with ID 1.");
-                onCompanyReady(1);
-            });
+            const insertUserResult = await client.query(
+                `INSERT INTO users (id, username, password, role, email, active_company_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+                [companyId, 'admin', hash, 'admin', 'admin@example.com', companyId]
+            );
+            const adminId = insertUserResult.rows[0].id;
+            
+            await client.query(`INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)`, [adminId, companyId]);
+            console.log("✅ Default admin user created and linked to company.");
+
         } else {
-            onCompanyReady(1);
+            const adminId = userCheck.rows[0].id;
+            await client.query(`INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [adminId, companyId]);
+            await client.query(`UPDATE users SET active_company_id = $1 WHERE id = $2`, [companyId, adminId]);
+            console.log("ℹ️ Default admin user already exists. Ensured link to company 1.");
         }
-    });
+    };
+
+    if (companyCheck.rows.length === 0) {
+        // PostgreSQL does not like explicit ID insert on SERIAL column unless identity is explicitly reset.
+        // We will insert without ID and update the ID sequence IF the insertion resulted in an ID > 1.
+        
+        const defaultCompanySql = `INSERT INTO companies (company_name, address_line1, address_line2, city_pincode, state, state_code, gstin, phone, email, bank_name, bank_account_no, bank_ifsc_code) 
+                                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`;
+        
+        const defaultCompanyParams = [
+            "ADVENTURER EXPORT", 
+            "3/2B, Nesavalar Colony, 2nd Street, PN Road",
+            "",
+            "TIRUPUR - 641602", 
+            "TAMILNADU", 
+            "33",
+            "33ABCFA3111D1ZF", 
+            "9791902205, 9842880404", 
+            "contact@adventurerexport.com",
+            "ICICI Bank",
+            "106105501618",
+            "ICIC0001061"
+        ];
+        
+        const insertResult = await client.query(defaultCompanySql, defaultCompanyParams);
+        companyId = insertResult.rows[0].id; // Get the generated ID
+        
+        // If the generated ID is NOT 1 (because the table wasn't completely empty), this might cause FK issues.
+        // For simplicity and to ensure the admin links correctly, we proceed with the generated ID.
+        if (companyId !== 1) {
+             console.warn(`⚠️ Default company generated ID ${companyId}. Expected 1. Proceeding with generated ID.`);
+        } else {
+            console.log("✅ Default company (Adventurer Export) created with ID 1.");
+        }
+        
+        await onCompanyReady(companyId);
+
+    } else {
+        companyId = companyCheck.rows[0].id;
+        await onCompanyReady(companyId);
+    }
 }
 
-function checkAndSeedAccounts(companyId, onComplete) {
-    db.get("SELECT id FROM ledger_groups WHERE company_id = ? AND name = 'Sundry Debtors'", [companyId], (err, groupRow) => {
-        if (err) {
-            console.error(`❌ [DB Check] Error checking for 'Sundry Debtors' for company ${companyId}:`, err.message);
-            return;
-        }
+async function checkAndSeedAccounts(client, companyId) {
+    const groupCheck = await client.query("SELECT id FROM ledger_groups WHERE company_id = $1 AND name = 'Sundry Debtors'", [companyId]);
 
-        if (!groupRow) {
-            console.warn(`⚠️ Chart of accounts for company ${companyId} is missing. Seeding now...`);
-            seedDefaultChartOfAccounts(companyId, (seedErr) => {
-                if (seedErr) {
-                    console.error(`❌ FAILED to seed chart of accounts for company ${companyId}:`, seedErr);
-                } else {
-                    console.log(`✅ Chart of accounts successfully seeded for company ${companyId}.`);
-                    onComplete();
-                }
-            });
-        } else {
-            console.log(`ℹ️ Chart of accounts verified for company ${companyId}.`);
-            onComplete();
-        }
-    });
+    if (groupCheck.rows.length === 0) {
+        console.warn(`⚠️ Chart of accounts for company ${companyId} is missing. Seeding now...`);
+        await seedDefaultChartOfAccounts(client, companyId);
+        console.log(`✅ Chart of accounts successfully seeded for company ${companyId}.`);
+    } else {
+        console.log(`ℹ️ Chart of accounts verified for company ${companyId}.`);
+    }
 }
 
-function seedDefaultChartOfAccounts(companyId, callback) {
+async function seedDefaultChartOfAccounts(client, companyId) {
     const groups = [
         { name: 'Primary', children: [
             { name: 'Current Assets', nature: 'Asset', children: [
@@ -312,45 +333,55 @@ function seedDefaultChartOfAccounts(companyId, callback) {
         ]}
     ];
     const ledgers = [
-        { name: 'Profit & Loss A/c', is_default: 1, groupName: null }, { name: 'Cash', groupName: 'Cash-in-Hand', is_default: 1 },
-        { name: 'Sales', groupName: 'Sales Accounts', is_default: 1 }, { name: 'Purchase', groupName: 'Purchase Accounts', is_default: 1 },
-        { name: 'CGST', groupName: 'Duties & Taxes', is_default: 1 }, { name: 'SGST', groupName: 'Duties & Taxes', is_default: 1 },
-        { name: 'IGST', groupName: 'Duties & Taxes', is_default: 1 },
+        { name: 'Profit & Loss A/c', is_default: true, groupName: null }, { name: 'Cash', groupName: 'Cash-in-Hand', is_default: true },
+        { name: 'Sales', groupName: 'Sales Accounts', is_default: true }, { name: 'Purchase', groupName: 'Purchase Accounts', is_default: true },
+        { name: 'CGST', groupName: 'Duties & Taxes', is_default: true }, { name: 'SGST', groupName: 'Duties & Taxes', is_default: true },
+        { name: 'IGST', groupName: 'Duties & Taxes', is_default: true },
     ];
     
-    db.serialize(() => {
-        const groupMap = new Map();
-        function insertGroups(groupList, parentId = null, onComplete) {
-            let pending = groupList.length;
-            if (pending === 0) return onComplete();
-            groupList.forEach(group => {
-                db.run('INSERT OR IGNORE INTO ledger_groups (company_id, name, parent_id, nature, is_default) VALUES (?, ?, ?, ?, ?)', 
-                [companyId, group.name, parentId, group.nature, group.is_default || 0], function(err) {
-                    if (err) console.error(`[Seed] Error inserting group ${group.name}:`, err.message);
-                    db.get('SELECT id FROM ledger_groups WHERE company_id = ? AND name = ?', [companyId, group.name], (e, r) => {
-                        if(r) groupMap.set(group.name, r.id);
-                        if (group.children) {
-                            insertGroups(group.children, r ? r.id : null, () => { if (--pending === 0) onComplete(); });
-                        } else {
-                            if (--pending === 0) onComplete();
-                        }
-                    });
-                });
-            });
+    const groupMap = new Map();
+
+    async function insertGroups(groupList, parentId = null) {
+        for (const group of groupList) {
+            const result = await client.query(
+                `INSERT INTO ledger_groups (company_id, name, parent_id, nature, is_default) 
+                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (company_id, name) DO NOTHING RETURNING id`,
+                [companyId, group.name, parentId, group.nature, group.is_default || false]
+            );
+
+            // Get the ID of the inserted or existing row
+            let currentId;
+            if (result.rows.length > 0) {
+                currentId = result.rows[0].id;
+            } else {
+                // If it was skipped due to conflict, fetch the existing ID
+                const existing = await client.query(`SELECT id FROM ledger_groups WHERE company_id = $1 AND name = $2`, [companyId, group.name]);
+                currentId = existing.rows[0].id;
+            }
+            
+            groupMap.set(group.name, currentId);
+            
+            if (group.children) {
+                await insertGroups(group.children, currentId);
+            }
         }
-        insertGroups(groups[0].children, null, () => {
-            let ledgersPending = ledgers.length;
-            if (ledgersPending === 0) return callback(null);
-            ledgers.forEach(ledger => {
-                const groupId = ledger.groupName ? groupMap.get(ledger.groupName) : null;
-                db.run('INSERT OR IGNORE INTO ledgers (company_id, name, group_id, is_default) VALUES (?, ?, ?, ?)', 
-                [companyId, ledger.name, groupId, ledger.is_default || 0], (err) => {
-                    if (err) console.error(`[Seed] Error inserting ledger ${ledger.name}:`, err.message);
-                    if (--ledgersPending === 0) callback(null);
-                });
-            });
-        });
-    });
+    }
+    
+    // Start recursion with the primary children (skipping 'Primary' itself)
+    await insertGroups(groups[0].children);
+
+    for (const ledger of ledgers) {
+        const groupId = ledger.groupName ? groupMap.get(ledger.groupName) : null;
+        await client.query(
+            'INSERT INTO ledgers (company_id, name, group_id, is_default) VALUES ($1, $2, $3, $4) ON CONFLICT (company_id, name) DO NOTHING', 
+            [companyId, ledger.name, groupId, ledger.is_default || false]
+        );
+    }
 }
 
-module.exports = db;
+// Export the pool connection, not the initialize function.
+// Route handlers must use this pool to acquire clients.
+module.exports = {
+    pool,
+    initializeDb // Export for server.js to call setup
+};

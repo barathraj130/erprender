@@ -1,7 +1,9 @@
+// server.js
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const db = require('./db');
+// --- POSTGRES FIX: Import pool and initializer function ---
+const { pool, initializeDb } = require('./db');
 const cron = require('node-cron');
 const { exec } = require('child_process');
 const disk = require('diskusage');
@@ -12,8 +14,8 @@ const { jwtAuthMiddleware, checkJwtAuth, checkJwtRole } = require('./middlewares
 // --- CORRECTED ROUTE IMPORTS ---
 // Routes
 const jwtAuthRoutes = require('./routes/jwtAuthRoutes');
-const partyRoutes = require('./routes/partyRoutes'); // Formerly userRoutes, now correctly pointing to the logic for Parties/Customers
-const companyRoutes = require('./routes/companyRoutes'); // Now correctly pointing to the new file for company profile management
+const partyRoutes = require('./routes/partyRoutes'); 
+const companyRoutes = require('./routes/companyRoutes'); 
 const ledgerRoutes = require('./routes/ledgerRoutes');
 const inventoryRoutes = require('./routes/inventoryRoutes');
 const voucherRoutes = require('./routes/voucherRoutes');
@@ -45,8 +47,8 @@ apiRouter.use('/jwt-auth', jwtAuthRoutes);
 // --- CORRECTED ROUTE USAGE ---
 // Protected
 apiRouter.use(checkJwtAuth);
-apiRouter.use('/users', auditLogMiddleware, partyRoutes); // Correctly uses partyRoutes for /api/users
-apiRouter.use('/companies', auditLogMiddleware, companyRoutes); // Correctly uses companyRoutes for /api/companies
+apiRouter.use('/users', auditLogMiddleware, partyRoutes); 
+apiRouter.use('/companies', auditLogMiddleware, companyRoutes); 
 apiRouter.use('/ledgers', auditLogMiddleware, ledgerRoutes);
 apiRouter.use('/inventory', auditLogMiddleware, inventoryRoutes);
 apiRouter.use('/vouchers', auditLogMiddleware, voucherRoutes);
@@ -64,17 +66,27 @@ apiRouter.use('/auditlog', checkJwtRole(['admin']), auditLogRoutes);
 // System Status
 apiRouter.get('/system/status', async (req, res) => {
   try {
-    const dbPromise = new Promise(resolve => {
-      db.get("SELECT 1", err => resolve(err ? 'Error' : 'Operational'));
+    const dbPromise = new Promise(async (resolve) => {
+      let client;
+      try {
+        // Attempt a connection and a simple query to verify DB health
+        client = await pool.connect();
+        await client.query("SELECT 1");
+        resolve('Operational');
+      } catch (err) {
+        resolve('Error');
+      } finally {
+        if (client) client.release();
+      }
     });
 
     const storagePromise = new Promise(resolve => {
-      // Check the /var/data directory if deployed on Render, otherwise check root/C:
+      // Check the /var/data directory if deployed on Render (even if PG is external, 
+      // other files like backups might exist here, or we use a sensible fallback)
       const checkPath = (process.env.RENDER && process.platform !== 'win32') ? '/var/data' : (process.platform === 'win32' ? 'c:' : '/');
       
       disk.check(checkPath, (err, info) => {
         if (err) {
-            console.error("Disk usage check error:", err);
             return resolve('Unknown');
         }
         const freePercent = (info.available / info.total) * 100;
@@ -82,6 +94,7 @@ apiRouter.get('/system/status', async (req, res) => {
       });
     });
 
+    // Note: Awaiting both promises here
     const [dbStatus, storageStatus] = await Promise.all([dbPromise, storagePromise]);
     res.json({ database: dbStatus, api: 'Operational', storage: storageStatus });
 
@@ -100,14 +113,9 @@ app.use(express.static(publicPath));
 app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
     
-    if (req.path === '/' || req.path === '/login.html') {
-        res.sendFile(path.join(publicPath, 'login.html'));
-    } 
-    else if (req.path === '/signup.html') {
-         res.sendFile(path.join(publicPath, 'signup.html'));
-    } 
-    else if (req.path.endsWith('.html')) { 
-        res.sendFile(path.join(publicPath, 'dashboard.html'));
+    // Assuming the public directory is set up for client-side routing
+    if (req.path === '/' || req.path === '/login.html' || req.path.endsWith('.html')) {
+        res.sendFile(path.join(publicPath, 'dashboard.html')); // Fallback to dashboard.html for all client routes
     } 
     else {
         next();
@@ -122,23 +130,11 @@ app.use((err, req, res, next) => {
   res.status(err.statusCode || 500).json({ error: err.message });
 });
 
-// Scheduled Backup
-cron.schedule('0 2 * * *', () => {
-  console.log('🕒 Running backup job...');
-  exec('node backup.js', (err, stdout, stderr) => {
-    if (err) console.error(`❌ Backup failed: ${err.message}`);
-    if (stderr) console.error(`stderr: ${stderr}`);
-    if (stdout) console.log(`✅ Backup Output: ${stdout.trim()}`);
-  });
-}, { scheduled: true, timezone: "Asia/Kolkata" });
 
-// Start Server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
-  console.log('🕒 Backup scheduled at 2:00 AM');
-  db.get("SELECT 1", (err) => {
-    if (err) console.error("❌ DB Connection Failed:", err.message);
-    else console.log("✅ DB Connection OK");
-  });
+  
+  // Call DB Initialization here, ensuring tables are created on startup
+  await initializeDb(); 
 });

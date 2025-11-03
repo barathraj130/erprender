@@ -4,7 +4,20 @@ const router = express.Router();
 const db = require('../db');
 
 // --- CHIT GROUP ROUTES ---
-
+// Paste this near the top of every route file:
+async function dbQuery(sql, params = []) {
+    let client;
+    try {
+        client = await pool.connect();
+        const result = await client.query(sql, params);
+        return result.rows;
+    } catch (e) {
+        console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+        throw e;
+    } finally {
+        if (client) client.release();
+    }
+}
 // GET all chit groups
 router.get('/', (req, res) => {
     db.all(`SELECT * FROM chit_groups ORDER BY start_date DESC`, [], (err, rows) => {

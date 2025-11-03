@@ -1,11 +1,27 @@
-// routes/userRoutes.js
+// routes/partyRoutes.js
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
+// --- PG FIX: Import pool ---
+const { pool } = require('../db'); 
 const bcrypt = require('bcryptjs');
 const saltRounds = 10;
 
-// Helper function to convert JSON data to a CSV string
+async function dbQuery(sql, params = []) {
+    let client;
+    try {
+        client = await pool.connect();
+        const result = await client.query(sql, params);
+        // PG returns rows; rowsCount is only used in mutation functions
+        return result.rows;
+    } catch (e) {
+        console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+        throw e;
+    } finally {
+        if (client) client.release();
+    }
+}
+
+// Helper function to convert JSON data to a CSV string (JS only, no DB change needed)
 function convertToCsv(data, headers) {
     if (!Array.isArray(data) || data.length === 0) {
         return '';
@@ -23,102 +39,38 @@ function convertToCsv(data, headers) {
     return [headerRow, ...dataRows].join('\n');
 }
 
-// ----- NEW SELF-HEALING HELPER FUNCTION -----
-// This function seeds the chart of accounts for a company if it's missing.
-function seedChartOfAccountsIfNeeded(companyId, callback) {
-    const groups = [
-        { name: 'Primary', children: [
-            { name: 'Current Assets', nature: 'Asset', children: [
-                { name: 'Cash-in-Hand', nature: 'Asset' }, { name: 'Bank Accounts', nature: 'Asset' },
-                { name: 'Sundry Debtors', nature: 'Asset' }, { name: 'Stock-in-Hand', nature: 'Asset' },
-            ]},
-            { name: 'Fixed Assets', nature: 'Asset' },
-            { name: 'Current Liabilities', nature: 'Liability', children: [
-                { name: 'Sundry Creditors', nature: 'Liability' }, { name: 'Duties & Taxes', nature: 'Liability' }
-            ]},
-            { name: 'Loans (Liability)', nature: 'Liability' }, { name: 'Direct Incomes', nature: 'Income' },
-            { name: 'Indirect Incomes', nature: 'Income' }, { name: 'Sales Accounts', nature: 'Income' },
-            { name: 'Direct Expenses', nature: 'Expense' }, { name: 'Indirect Expenses', nature: 'Expense' },
-            { name: 'Purchase Accounts', nature: 'Expense' }
-        ]}
-    ];
-    const ledgers = [
-        { name: 'Profit & Loss A/c', is_default: 1, groupName: null }, { name: 'Cash', groupName: 'Cash-in-Hand', is_default: 1 },
-        { name: 'Sales', groupName: 'Sales Accounts', is_default: 1 }, { name: 'Purchase', groupName: 'Purchase Accounts', is_default: 1 },
-        { name: 'CGST', groupName: 'Duties & Taxes', is_default: 1 }, { name: 'SGST', groupName: 'Duties & Taxes', is_default: 1 },
-        { name: 'IGST', groupName: 'Duties & Taxes', is_default: 1 },
-    ];
-    
-    db.get("SELECT id FROM ledger_groups WHERE company_id = ? AND name = 'Sundry Debtors'", [companyId], (err, groupRow) => {
-        if (err) return callback(err);
-        if (groupRow) return callback(null); // Already seeded, continue
-
-        console.warn(`[Self-Healing] Chart of accounts for company ${companyId} is missing. Seeding now...`);
-        db.serialize(() => {
-            const groupMap = new Map();
-            function insertGroups(groupList, parentId = null, onComplete) {
-                let pending = groupList.length;
-                if (pending === 0) return onComplete();
-                groupList.forEach(group => {
-                    db.run('INSERT OR IGNORE INTO ledger_groups (company_id, name, parent_id, nature, is_default) VALUES (?, ?, ?, ?, ?)', 
-                    [companyId, group.name, parentId, group.nature, group.is_default || 0], function(err) {
-                        if (err) console.error(`[Seed] Error inserting group ${group.name}:`, err.message);
-                        db.get('SELECT id FROM ledger_groups WHERE company_id = ? AND name = ?', [companyId, group.name], (e, r) => {
-                            if(r) groupMap.set(group.name, r.id);
-                            if (group.children) {
-                                insertGroups(group.children, r ? r.id : null, () => { if (--pending === 0) onComplete(); });
-                            } else {
-                                if (--pending === 0) onComplete();
-                            }
-                        });
-                    });
-                });
-            }
-            insertGroups(groups[0].children, null, () => {
-                let ledgersPending = ledgers.length;
-                if (ledgersPending === 0) return callback(null);
-                ledgers.forEach(ledger => {
-                    const groupId = ledger.groupName ? groupMap.get(ledger.groupName) : null;
-                    db.run('INSERT OR IGNORE INTO ledgers (company_id, name, group_id, is_default) VALUES (?, ?, ?, ?)', 
-                    [companyId, ledger.name, groupId, ledger.is_default || 0], (err) => {
-                        if (err) console.error(`[Seed] Error inserting ledger ${ledger.name}:`, err.message);
-                        if (--ledgersPending === 0) callback(null);
-                    });
-                });
-            });
-        });
-    });
-}
-// ----- END OF HELPER FUNCTION -----
+// NOTE: The synchronous 'seedChartOfAccountsIfNeeded' helper has been removed, 
+// as PostgreSQL seeding is handled asynchronously in db.js on server startup.
 
 // GET /api/users - Get all users (parties) for the active company
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
     const companyId = req.user.active_company_id;
     if (!companyId) {
         return res.status(400).json({ error: "No active company selected." });
     }
+    // Changed IFNULL to COALESCE, $1 placeholder
     const sql = `
         SELECT
           u.id, u.username, u.email, u.phone, u.company, u.initial_balance,
           u.created_at, u.address_line1, u.address_line2, u.city_pincode,
           u.state, u.gstin, u.state_code, u.role,
-          (u.initial_balance + IFNULL((SELECT SUM(t.amount) FROM transactions t WHERE t.user_id = u.id), 0)) AS remaining_balance 
+          (u.initial_balance + COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.user_id = u.id), 0)) AS remaining_balance 
         FROM users u
         JOIN user_companies uc ON u.id = uc.user_id
-        WHERE uc.company_id = ?
+        WHERE uc.company_id = $1
         ORDER BY u.id DESC
     `;
-    db.all(sql, [companyId], (err, rows) => {
-        if (err) {
-            console.error("Error fetching users for company:", err.message);
-            return res.status(500).json({ error: "Failed to fetch user/party data." });
-        }
+    try {
+        const rows = await dbQuery(sql, [companyId]);
         res.json(rows.map(({ password, ...rest }) => rest) || []);
-    });
+    } catch (err) {
+        console.error("Error fetching users for company:", err.message);
+        return res.status(500).json({ error: "Failed to fetch user/party data." });
+    }
 });
 
 // POST /api/users - Create a user (Party) AND its corresponding Accounting Ledger
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
     const companyId = req.user.active_company_id;
     const { 
         username, email, phone, company, initial_balance, role,
@@ -130,55 +82,54 @@ router.post('/', (req, res) => {
     if (!username) return res.status(400).json({ error: "Username (Party Name) is required." });
 
     const finalEmail = (email && email.trim() !== '') ? email.trim() : null;
+    const initialBalanceFloat = parseFloat(initial_balance || 0);
 
-    const createUserAndLedger = (hashedPassword = null) => {
-        // --- FIX: Run the self-healing check before the transaction ---
-        seedChartOfAccountsIfNeeded(companyId, (seedErr) => {
-            if (seedErr) {
-                return res.status(500).json({ error: "Failed to verify or prepare accounting setup.", details: seedErr.message });
+    const createUserAndLedger = async (hashedPassword = null) => {
+        let client;
+        try {
+            client = await pool.connect();
+            await client.query("BEGIN");
+            
+            // 1. Create User
+            const userSql = `INSERT INTO users (username, password, email, phone, company, initial_balance, role, address_line1, address_line2, city_pincode, state, gstin, state_code, active_company_id) 
+                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`;
+            const userParams = [
+                username, hashedPassword, finalEmail, phone, company, initialBalanceFloat, role || 'user',
+                address_line1, address_line2, city_pincode, state, gstin, state_code, companyId
+            ];
+            const userResult = await client.query(userSql, userParams);
+            const newUserId = userResult.rows[0].id;
+
+            // 2. Link User to Company
+            await client.query(`INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)`, [newUserId, companyId]);
+            
+            // 3. Get Sundry Debtors Group ID
+            const groupResult = await client.query("SELECT id FROM ledger_groups WHERE company_id = $1 AND name = 'Sundry Debtors'", [companyId]);
+            const groupRow = groupResult.rows[0];
+
+            if (!groupRow) {
+                throw new Error("Critical Error: Accounting group 'Sundry Debtors' not found. Setup may be incomplete.");
             }
+            
+            // 4. Create Ledger
+            const ledgerSql = `INSERT INTO ledgers (company_id, name, group_id, opening_balance, is_dr, gstin, state) 
+                               VALUES ($1, $2, $3, $4, $5, $6, $7)`;
+            const isDr = initialBalanceFloat >= 0 ? true : false;
+            await client.query(ledgerSql, [companyId, username, groupRow.id, initialBalanceFloat, isDr, gstin, state]);
 
-            db.serialize(() => {
-                db.run("BEGIN TRANSACTION;");
-                const userSql = `INSERT INTO users (username, password, email, phone, company, initial_balance, role, address_line1, address_line2, city_pincode, state, gstin, state_code, active_company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-                db.run(userSql, [
-                    username, hashedPassword, finalEmail, phone, company, parseFloat(initial_balance || 0), role || 'user',
-                    address_line1, address_line2, city_pincode, state, gstin, state_code, companyId
-                ], function(userErr) {
-                    if (userErr) {
-                        db.run("ROLLBACK;");
-                        return res.status(500).json({ error: "Failed to create party record.", details: userErr.message });
-                    }
-                    const newUserId = this.lastID;
+            await client.query("COMMIT");
+            res.status(201).json({ id: newUserId, message: 'Party and Accounting Ledger created successfully.' });
 
-                    db.run(`INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)`, [newUserId, companyId], (linkErr) => {
-                        if (linkErr) {
-                            db.run("ROLLBACK;");
-                            return res.status(500).json({ error: "Failed to link user to company.", details: linkErr.message });
-                        }
-                        
-                        db.get("SELECT id FROM ledger_groups WHERE company_id = ? AND name = 'Sundry Debtors'", [companyId], (groupErr, groupRow) => {
-                            if (groupErr || !groupRow) {
-                                db.run("ROLLBACK;");
-                                return res.status(500).json({ error: "Critical Error: Accounting group 'Sundry Debtors' not found. Setup may be incomplete." });
-                            }
-                            
-                            const ledgerSql = `INSERT INTO ledgers (company_id, name, group_id, opening_balance, is_dr, gstin, state) VALUES (?, ?, ?, ?, ?, ?, ?)`;
-                            db.run(ledgerSql, [companyId, username, groupRow.id, initial_balance || 0, (initial_balance || 0) >= 0, gstin, state], (ledgerErr) => {
-                                if (ledgerErr) {
-                                    db.run("ROLLBACK;");
-                                    return res.status(500).json({ error: "User was created, but failed to create corresponding accounting ledger.", details: ledgerErr.message });
-                                }
-                                db.run("COMMIT;", (commitErr) => {
-                                    if (commitErr) return res.status(500).json({ error: "Failed to commit transaction", details: commitErr.message });
-                                    res.status(201).json({ id: newUserId, message: 'Party and Accounting Ledger created successfully.' });
-                                });
-                            });
-                        });
-                    });
-                });
-            });
-        });
+        } catch (err) {
+            if (client) await client.query("ROLLBACK");
+            let errorMsg = err.message;
+            if (err.code === '23505') errorMsg = "A user or ledger with that name already exists in your company.";
+            
+            console.error("PG POST User/Party Error:", errorMsg, err.stack);
+            return res.status(500).json({ error: "Failed to create party record: " + errorMsg, details: err.message });
+        } finally {
+            if (client) client.release();
+        }
     };
 
     if (password) {
@@ -192,7 +143,7 @@ router.post('/', (req, res) => {
 });
 
 // PUT /api/users/:id - Update User (Party) and associated Ledger
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const companyId = req.user.active_company_id;
     const { username, email, phone, company, initial_balance, role,
@@ -200,96 +151,118 @@ router.put('/:id', (req, res) => {
 
     if (!username) return res.status(400).json({ error: "Username is required." });
     
-    db.get("SELECT username FROM users WHERE id = ?", [id], (err, oldUser) => {
-        if (err) return res.status(500).json({error: "Could not fetch old user data."});
+    let client;
+    try {
+        const oldUserRows = await dbQuery("SELECT username FROM users WHERE id = $1", [id]);
+        const oldUser = oldUserRows[0];
+
         if (!oldUser) return res.status(404).json({error: "User not found."});
-        
         const oldUsername = oldUser.username;
 
-        db.serialize(() => {
-            db.run("BEGIN TRANSACTION;");
+        client = await pool.connect();
+        await client.query("BEGIN");
+        
+        // 1. Update User
+        const userUpdateSql = `UPDATE users SET 
+            username = $1, email = $2, phone = $3, company = $4, initial_balance = $5, role = $6, 
+            address_line1 = $7, address_line2 = $8, city_pincode = $9, state = $10, gstin = $11, state_code = $12
+            WHERE id = $13`;
+        const userParams = [
+            username, email, phone, company, initial_balance, role,
+            address_line1, address_line2, city_pincode, state, gstin, state_code, id
+        ];
+        const userResult = await client.query(userUpdateSql, userParams);
+        
+        if (userResult.rowCount === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "User not found or no changes made." });
+        }
 
-            const userUpdateSql = `UPDATE users SET 
-                username = ?, email = ?, phone = ?, company = ?, initial_balance = ?, role = ?, 
-                address_line1 = ?, address_line2 = ?, city_pincode = ?, state = ?, gstin = ?, state_code = ?
-                WHERE id = ?`;
-            db.run(userUpdateSql, [
-                username, email, phone, company, initial_balance, role,
-                address_line1, address_line2, city_pincode, state, gstin, state_code, id
-            ], function(userErr) {
-                if (userErr) {
-                    db.run("ROLLBACK;");
-                    return res.status(500).json({ error: "Failed to update user.", details: userErr.message });
-                }
+        // 2. Update Ledger name if username changed
+        if (oldUsername !== username) {
+            const ledgerUpdateSql = `UPDATE ledgers SET name = $1 WHERE name = $2 AND company_id = $3`;
+            await client.query(ledgerUpdateSql, [username, oldUsername, companyId]);
+        }
+        
+        // 3. Update Ledger opening balance, is_dr status, etc.
+        const ledgerUpdateDetailsSql = `UPDATE ledgers SET opening_balance = $1, is_dr = $2, gstin = $3, state = $4 
+                                        WHERE name = $5 AND company_id = $6`;
+        const isDr = parseFloat(initial_balance || 0) >= 0;
+        await client.query(ledgerUpdateDetailsSql, [initial_balance, isDr, gstin, state, username, companyId]);
 
-                if (oldUsername !== username) {
-                    const ledgerUpdateSql = `UPDATE ledgers SET name = ? WHERE name = ? AND company_id = ?`;
-                    db.run(ledgerUpdateSql, [username, oldUsername, companyId], (ledgerErr) => {
-                        if (ledgerErr) {
-                            db.run("ROLLBACK;");
-                            return res.status(500).json({ error: "User updated, but failed to update ledger name.", details: ledgerErr.message });
-                        }
-                        db.run("COMMIT;");
-                        res.json({ message: 'Party and Ledger updated successfully' });
-                    });
-                } else {
-                    db.run("COMMIT;");
-                    res.json({ message: 'Party updated successfully' });
-                }
-            });
-        });
-    });
+        await client.query("COMMIT");
+        res.json({ message: 'Party and Ledger updated successfully' });
+
+    } catch (err) {
+        if (client) await client.query("ROLLBACK");
+        let errorMsg = err.message;
+        if (err.code === '23505') errorMsg = "A user or ledger with that name already exists in your company.";
+        
+        console.error("PG PUT User/Party Error:", errorMsg, err.stack);
+        return res.status(500).json({ error: "Failed to update user: " + errorMsg, details: err.message });
+    } finally {
+        if (client) client.release();
+    }
 });
 
 // DELETE /api/users/:id - Delete User (Party) and associated Ledger
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
     const { id } = req.params;
     const companyId = req.user.active_company_id;
+    let client;
 
-    db.get('SELECT username FROM users WHERE id = ?', [id], (err, user) => {
-        if (err || !user) return res.status(404).json({ message: "User to delete not found." });
+    try {
+        const userCheckRows = await dbQuery('SELECT username FROM users WHERE id = $1', [id]);
+        const user = userCheckRows[0];
+        if (!user) return res.status(404).json({ message: "User to delete not found." });
         
         const ledgerNameToDelete = user.username;
 
-        db.serialize(() => {
-            db.run("BEGIN TRANSACTION;");
+        client = await pool.connect();
+        await client.query("BEGIN");
             
-            db.run("DELETE FROM ledgers WHERE name = ? AND company_id = ?", [ledgerNameToDelete, companyId], function(ledgerErr) {
-                if (ledgerErr) {
-                    db.run("ROLLBACK;");
-                    return res.status(500).json({ error: 'Failed to delete corresponding ledger. Party was not deleted.', details: ledgerErr.message });
-                }
-                
-                db.run("DELETE FROM users WHERE id = ?", [id], function(userErr) {
-                    if (userErr) {
-                        db.run("ROLLBACK;");
-                        return res.status(500).json({ error: "Failed to delete user record.", details: userErr.message });
-                    }
-                    db.run("COMMIT;");
-                    res.json({ message: "Party and associated accounting ledger deleted successfully." });
-                });
-            });
-        });
-    });
+        // 1. Delete Ledger (Must succeed first as it might be referenced)
+        const ledgerDeleteResult = await client.query("DELETE FROM ledgers WHERE name = $1 AND company_id = $2", [ledgerNameToDelete, companyId]);
+        
+        // 2. Delete User (CASCADE handles user_companies)
+        const userDeleteResult = await client.query("DELETE FROM users WHERE id = $1", [id]);
+
+        if (userDeleteResult.rowCount === 0) {
+            // Should not happen if user was found in step 1, but safe check
+            await client.query("ROLLBACK");
+            return res.status(404).json({ message: 'User not found or already deleted.' });
+        }
+        
+        await client.query("COMMIT");
+        res.json({ message: "Party and associated accounting ledger deleted successfully." });
+
+    } catch (err) {
+        if (client) await client.query("ROLLBACK");
+        console.error("PG DELETE User/Party Error:", err.message);
+        return res.status(500).json({ error: 'Failed to delete records.', details: err.message });
+    } finally {
+        if (client) client.release();
+    }
 });
 
-// GET /api/users/export - Export party data to CSV
-router.get('/export', (req, res) => {
+// GET /api/users/export - Export party data to CSV (Migrate to use dbQuery)
+router.get('/export', async (req, res) => {
     const companyId = req.user.active_company_id;
     const sql = `
       SELECT
         u.id, u.username, u.email, u.phone, u.company, u.initial_balance,
         u.created_at, u.address_line1, u.address_line2, u.city_pincode,
         u.state, u.gstin, u.state_code,
-        (u.initial_balance + IFNULL((SELECT SUM(t.amount) FROM transactions t WHERE t.user_id = u.id), 0)) AS remaining_balance 
+        (u.initial_balance + COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.user_id = u.id), 0)) AS remaining_balance 
       FROM users u
       JOIN user_companies uc ON u.id = uc.user_id
-      WHERE uc.company_id = ? AND u.role != 'admin'
+      WHERE uc.company_id = $1 AND u.role != 'admin'
       ORDER BY u.id DESC
     `;
-    db.all(sql, [companyId], (err, rows) => {
-        if (err) return res.status(500).json({ error: "Failed to fetch user data for export." });
-        
+    
+    try {
+        const rows = await dbQuery(sql, [companyId]);
+
         const headers = [
             { key: 'id', label: 'ID' }, { key: 'username', label: 'Party Name' },
             { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' },
@@ -304,7 +277,9 @@ router.get('/export', (req, res) => {
         res.header('Content-Type', 'text/csv');
         res.attachment('parties_export.csv');
         res.send(csv);
-    });
+    } catch (err) {
+        return res.status(500).json({ error: "Failed to fetch user data for export." });
+    }
 });
 
 module.exports = router;

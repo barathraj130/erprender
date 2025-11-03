@@ -7,7 +7,20 @@ const bcrypt = require('bcryptjs');
 const db = require('../db');
 const { jwtSecret } = require('../config');
 const { checkAuth } = require('../middlewares/authMiddleware');
-
+// Paste this near the top of every route file:
+async function dbQuery(sql, params = []) {
+    let client;
+    try {
+        client = await pool.connect();
+        const result = await client.query(sql, params);
+        return result.rows;
+    } catch (e) {
+        console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+        throw e;
+    } finally {
+        if (client) client.release();
+    }
+}
 // @route   POST /auth/signup
 // @desc    Register a new company and its first admin user
 // @access  Public

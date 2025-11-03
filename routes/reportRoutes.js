@@ -2,7 +2,20 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
+// Paste this near the top of every route file:
+async function dbQuery(sql, params = []) {
+    let client;
+    try {
+        client = await pool.connect();
+        const result = await client.query(sql, params);
+        return result.rows;
+    } catch (e) {
+        console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+        throw e;
+    } finally {
+        if (client) client.release();
+    }
+}
 // --- Helper function to calculate ledger closing balances ---
 // This is the core of all financial reports
 function getLedgerClosingBalances(companyId, endDate, callback) {

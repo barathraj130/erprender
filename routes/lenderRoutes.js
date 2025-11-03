@@ -3,7 +3,20 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
+// Paste this near the top of every route file:
+async function dbQuery(sql, params = []) {
+  let client;
+  try {
+      client = await pool.connect();
+      const result = await client.query(sql, params);
+      return result.rows;
+  } catch (e) {
+      console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+      throw e;
+  } finally {
+      if (client) client.release();
+  }
+}
 // Get all external entities (can filter by type if needed in query: ?type=Supplier)
 router.get('/', (req, res) => {
   let sql = 'SELECT id, lender_name, entity_type, contact_person, phone, email, notes, initial_payable_balance, created_at FROM lenders ORDER BY lender_name ASC';

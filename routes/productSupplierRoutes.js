@@ -2,7 +2,20 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
+// Paste this near the top of every route file:
+async function dbQuery(sql, params = []) {
+    let client;
+    try {
+        client = await pool.connect();
+        const result = await client.query(sql, params);
+        return result.rows;
+    } catch (e) {
+        console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+        throw e;
+    } finally {
+        if (client) client.release();
+    }
+}
 // --- NEW HELPER FUNCTION TO CREATE THE MISSING TRANSACTION (CORRECTED) ---
 // This function now robustly checks to prevent duplicate transactions.
 async function createInitialStockTransaction(productId, supplierId, purchasePrice) {

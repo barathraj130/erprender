@@ -4,7 +4,20 @@ const router = express.Router();
 const db = require('../db');
 const bcrypt = require('bcryptjs');
 const saltRounds = 10;
-
+// Paste this near the top of every route file:
+async function dbQuery(sql, params = []) {
+    let client;
+    try {
+        client = await pool.connect();
+        const result = await client.query(sql, params);
+        return result.rows;
+    } catch (e) {
+        console.error("PG Query Error:", e.message, "SQL:", sql, "Params:", params);
+        throw e;
+    } finally {
+        if (client) client.release();
+    }
+}
 // Helper function to convert JSON data to a CSV string
 function convertToCsv(data, headers) {
     if (!Array.isArray(data) || data.length === 0) {
