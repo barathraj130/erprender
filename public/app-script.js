@@ -1521,7 +1521,9 @@ async function handleUserSubmit(e) {
 }
 
 function formatLedgerDate(dateString) {
-    const date = new Date(dateString + 'T00:00:00'); // Ensure correct date parsing
+    if (!dateString) return "N/A";
+    const date = new Date(dateString.split('T')[0] + 'T00:00:00'); 
+    if (isNaN(date)) return "Invalid Date";
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
@@ -1642,7 +1644,6 @@ function getFullCategoryDetails(baseCategoryName, paymentMode) {
     }
 }
 // REPLACE this entire function in app-script.js
-
 async function openTransactionModal(tx = null, preselectUserId = null, isBusinessExternal = false, preselectLenderId = null, preselectAgreementId = null, preselectCategory = null, preselectInvoiceId = null) {
     const modal = document.getElementById("transactionModal");
     const form = document.getElementById("transactionForm");
@@ -1727,6 +1728,7 @@ async function openTransactionModal(tx = null, preselectUserId = null, isBusines
         agreementDropdown.value = tx.agreement_id || "";
         amountField.value = tx.amount !== undefined ? Math.abs(tx.amount) : "";
         descriptionField.value = tx.description || "";
+        // FIX 1: Ensure date is displayed correctly
         dateField.value = tx.date ? tx.date.split("T")[0] : new Date().toISOString().split("T")[0];
         relatedInvoiceIdInput.value = tx.related_invoice_id || ""; // Populate if editing
         
@@ -1802,7 +1804,6 @@ async function openTransactionModal(tx = null, preselectUserId = null, isBusines
     modal.classList.add('show');
 }
 // REPLACE this entire function in app-script.js
-
 async function handleTransactionSubmit(e) {
     e.preventDefault();
 
@@ -2353,7 +2354,6 @@ async function deleteLender(id) {
         alert("Error: " + error.message);
     }
 }
-
 async function loadCustomerSummaries() {
     const customerTableBody = document.getElementById("customerTableBody");
     if (!customerTableBody) {
@@ -2444,6 +2444,7 @@ async function loadCustomerSummaries() {
         }
     }
 }
+
 async function loadSupplierSummaries() {
     const supplierTableBody = document.getElementById("supplierTableBody");
     if(!supplierTableBody) return;
@@ -2808,10 +2809,17 @@ function openUserTransactionHistoryModal(
     const filterDropdown = document.getElementById(
         "userTxHistoryCategoryFilter",
     );
+    if (!modal || !title || !filterDropdown) return;
+
     title.textContent = `Transaction History for ${userName}`;
+    
+    // Populate the filter dropdown with relevant options for this specific user
+    populateUserHistoryFilterDropdown(userId); 
+    
     filterDropdown.value = initialFilter;
     filterDropdown.dataset.userId = userId;
     filterDropdown.dataset.userName = userName;
+    
     loadUserTransactionHistory(userId, userName, initialFilter);
     modal.classList.add('show');
 }
@@ -2848,63 +2856,49 @@ async function loadUserTransactionHistory(
             return;
         }
 
+        // FIX 2: Only include actual transactions related to this user (user_id is set)
         let allEntries = [...allTransactionsCache.filter(tx => tx.user_id === userId)];
         
-        // **START OF THE FIX**
-        // Create pseudo-transactions for all payments made on invoices for this user
-        const userInvoicesWithPayments = invoicesCache.filter(inv => inv.customer_id === userId && parseFloat(inv.paid_amount || 0) > 0);
+        // FIX 2: We must check if the transaction is a sale/return transaction 
+        // that was created along with an invoice, OR a standalone payment transaction.
         
-        userInvoicesWithPayments.forEach(inv => {
-            allEntries.push({
-                // Treat it like a transaction for sorting and display
-                id: `inv-pmt-${inv.id}`, // Unique-ish ID
-                date: inv.invoice_date, // Assume payment date is invoice date for simplicity
-                category: 'Payment Received (Invoice)',
-                description: `Payment for Invoice #${inv.invoice_number}`,
-                amount: -Math.abs(parseFloat(inv.paid_amount)), // Payment reduces customer balance (credit)
-                isInvoicePayment: true, // Custom flag
-            });
-        });
-        // **END OF THE FIX**
-
         const filteredEntries = categoryGroupFilter === 'all'
             ? allEntries
             : allEntries.filter(entry => {
-                // Allow invoice payments to show in the "All" and "Payments" filters
-                if (entry.isInvoicePayment) {
-                    return categoryGroupFilter === 'all' || categoryGroupFilter === 'customer_payment';
-                }
                 const categoryInfo = transactionCategories.find(cat => cat.name === entry.category);
                 if (!categoryInfo || !categoryInfo.group) return false;
+                
                 if (categoryGroupFilter === "customer_loan") return ["customer_loan_out", "customer_loan_in"].includes(categoryInfo.group);
                 if (categoryGroupFilter === "customer_chit") return ["customer_chit_in", "customer_chit_out"].includes(categoryInfo.group);
-                if (categoryGroupFilter === "customer_revenue") return ["customer_revenue", "customer_service"].includes(categoryInfo.group);
+                if (categoryGroupFilter === "customer_revenue") return ["customer_revenue"].includes(categoryInfo.group);
+                if (categoryGroupFilter === "customer_payment") return ["customer_payment"].includes(categoryInfo.group);
+                
                 return categoryInfo.group === categoryGroupFilter;
             });
         
+        // Sort by date ascending
         filteredEntries.sort((a, b) => new Date(a.date) - new Date(b.date) || (a.id||0) - (b.id||0));
         
         tableBody.innerHTML = "";
 
         const firstTransactionDate = filteredEntries.length > 0 ? filteredEntries[0].date : new Date().toISOString().split('T')[0];
         
-        let openingBalance = parseFloat(customer.initial_balance || 0);
+        // 1. Starting Point: Initial Balance from User Profile
+        let runningBalance = parseFloat(customer.initial_balance || 0);
         
+        // 2. Add/Deduct all transactions *before* the first displayed entry (for opening balance calculation)
         allTransactionsCache
             .filter(tx => tx.user_id === userId && tx.date < firstTransactionDate)
-            .forEach(tx => { openingBalance += parseFloat(tx.amount || 0); });
+            .forEach(tx => { 
+                runningBalance += parseFloat(tx.amount || 0); 
+            });
 
-        // Also add past invoice payments to opening balance
-        invoicesCache
-            .filter(inv => inv.customer_id === userId && inv.invoice_date < firstTransactionDate && parseFloat(inv.paid_amount || 0) > 0)
-            .forEach(inv => { openingBalance -= parseFloat(inv.paid_amount); });
-
-        let runningBalance = openingBalance;
+        
         let totalDebits = 0;
         let totalCredits = 0;
         
-        const openingDate = new Date(firstTransactionDate + 'T00:00:00');
-        const formattedOpeningDate = `${String(openingDate.getDate()).padStart(2, '0')}-${openingDate.toLocaleString('default', { month: 'short' })}-${openingDate.getFullYear()}`;
+        // FIX 1: Use formatLedgerDate helper
+        const formattedOpeningDate = formatLedgerDate(firstTransactionDate);
 
         const openingRow = tableBody.insertRow();
         openingRow.innerHTML = `
@@ -2932,24 +2926,33 @@ async function loadUserTransactionHistory(
                     totalCredits += Math.abs(amount);
                 }
                 
+                // Update running balance
                 runningBalance += amount;
                 
                 let particulars = `${tx.category || "N/A"}`;
                 if (tx.description) particulars += ` (${tx.description})`;
-
+                
                 let actionButton = '';
-                if (tx.related_invoice_id && tx.category.toLowerCase().includes('sale to customer')) {
+                // Check if this transaction is a Sale on Credit and if the related invoice is not fully paid
+                if (tx.related_invoice_id && tx.category.toLowerCase().includes('sale to customer (on credit)')) {
                     const invoice = invoicesCache.find(inv => inv.id === tx.related_invoice_id);
-                    if (invoice && invoice.status !== 'Paid') {
+                    if (invoice) {
                         const balanceDue = (parseFloat(invoice.total_amount) || 0) - (parseFloat(invoice.paid_amount) || 0);
-                        if (balanceDue > 0) {
+                        if (balanceDue > 0.01) {
                            actionButton = `<button class="btn btn-success btn-sm" style="margin-left:10px;" onclick="openTransactionModal(null, ${userId}, false, null, null, 'Payment Received from Customer', ${tx.related_invoice_id})">Pay Now</button>`;
+                           particulars += ` (Invoice ${invoice.invoice_number})`;
                         }
                     }
+                } else if (tx.related_invoice_id && tx.category.toLowerCase().includes('payment received')) {
+                    const invoice = invoicesCache.find(inv => inv.id === tx.related_invoice_id);
+                    if (invoice) {
+                         particulars += ` (Payment for Invoice ${invoice.invoice_number})`;
+                    }
                 }
+
                 
-                const txDate = new Date(tx.date + 'T00:00:00');
-                const formattedTxDate = `${String(txDate.getDate()).padStart(2, '0')}-${txDate.toLocaleString('default', { month: 'short' })}-${txDate.getFullYear()}`;
+                // FIX 1: Use formatLedgerDate for display
+                const formattedTxDate = formatLedgerDate(tx.date);
 
                 row.innerHTML = `
                     <td>${formattedTxDate}</td>
