@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 // --- POSTGRES CONFIGURATION ---
 // DATABASE_URL environment variable is provided by Render's PostgreSQL service
 // We use the provided URL as the fallback for local testing.
-const DATABASE_URL = process.env.DATABASE_URL || "postgresql://erp_iglu_user:tQ6aeuLk4FIEqsSmYFuSMV6FB4xUwqtt@dpg-d4337g7gi27c73fn0os0-a/erp_iglu";
+const DATABASE_URL = process.env.DATABASE_URL || "postgresql://erp_iglu_user:tQ6aeuLk4FIEqsSmYFuSMV6FB4xUwqtt@dpg-d4337g7gi27c73fn0os0-a.oregon-postgres.render.com/erp_iglu";
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
