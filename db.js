@@ -26,16 +26,25 @@ async function initializeDb() {
     client = await pool.connect();
     console.log("✅ [db.js] Connected to the PostgreSQL database.");
     
-    // Begin transaction for initialization
+    // --- 1. ISOLATED ENUM CREATION ---
+    // This must run successfully and outside the main transaction 
+    // to ensure the type exists before tables try to reference it.
+    try {
+        await client.query(`CREATE TYPE nature_type AS ENUM ('Asset', 'Liability', 'Income', 'Expense')`);
+        console.log("✅ [db.js] Custom type 'nature_type' created.");
+    } catch (e) {
+        if (e.code === '42710') { 
+            console.log("ℹ️ [db.js] Custom type 'nature_type' already exists.");
+        } else {
+             // If any other critical error occurs here, re-throw it.
+             throw e;
+        }
+    }
+    
+    // --- 2. START MAIN TRANSACTION FOR TABLES AND SEEDING ---
     await client.query('BEGIN');
-
     console.log("ℹ️ [db.js] Starting database initialization (creating tables)...");
     
-    // --- NOTE ON SYNTAX ---
-    // PostgreSQL uses SERIAL for auto-increment and double quotes for case-sensitive names,
-    // although we will stick to lowercase names for simplicity.
-    // FOREIGN KEY constraints and data types are adjusted.
-
     const createTableStatements = [
       `CREATE TABLE IF NOT EXISTS "companies" (id SERIAL PRIMARY KEY, company_name TEXT UNIQUE NOT NULL, address_line1 TEXT, address_line2 TEXT, city_pincode TEXT, state TEXT, gstin TEXT UNIQUE, state_code TEXT, phone TEXT, email TEXT UNIQUE, bank_name TEXT, bank_account_no TEXT, bank_ifsc_code TEXT, logo_url TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE IF NOT EXISTS "users" (id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, email TEXT UNIQUE, password TEXT, role TEXT NOT NULL DEFAULT 'user', phone TEXT, company TEXT, initial_balance REAL NOT NULL DEFAULT 0, address_line1 TEXT, address_line2 TEXT, city_pincode TEXT, state TEXT, gstin TEXT, state_code TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, active_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL)`,
@@ -62,7 +71,6 @@ async function initializeDb() {
       `CREATE TABLE IF NOT EXISTS "audit_log" (id SERIAL PRIMARY KEY, timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, user_id_acting INTEGER REFERENCES users(id) ON DELETE SET NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id INTEGER, details_before TEXT, details_after TEXT, ip_address TEXT)`,
       `CREATE TABLE IF NOT EXISTS "notifications" (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, message TEXT NOT NULL, type TEXT DEFAULT 'info', link TEXT, is_read BOOLEAN DEFAULT FALSE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)`,
       // Ledger tables
-      `CREATE TYPE nature_type AS ENUM ('Asset', 'Liability', 'Income', 'Expense')`,
       `CREATE TABLE IF NOT EXISTS "ledger_groups" (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, parent_id INTEGER REFERENCES ledger_groups(id) ON DELETE CASCADE, nature nature_type, is_default BOOLEAN DEFAULT FALSE, UNIQUE(company_id, name))`,
       `CREATE TABLE IF NOT EXISTS "ledgers" (id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, group_id INTEGER NOT NULL REFERENCES ledger_groups(id) ON DELETE RESTRICT, opening_balance REAL DEFAULT 0, is_dr BOOLEAN DEFAULT TRUE, gstin TEXT, state TEXT, is_default BOOLEAN DEFAULT FALSE, UNIQUE(company_id, name))`,
       // Inventory tables
@@ -190,21 +198,9 @@ async function initializeDb() {
         )`
     ];
     
-    // Execute statements sequentially or in parallel (pg is parallel, but we need
-    // to handle the nature_type first, so we use a loop with await).
-    
-    // --- Special handling for ENUM type creation ---
-    try {
-        await client.query(`SELECT 1 FROM pg_type WHERE typname = 'nature_type'`);
-    } catch (e) {
-        // If query fails (meaning type doesn't exist), create it.
-        await client.query(`CREATE TYPE nature_type AS ENUM ('Asset', 'Liability', 'Income', 'Expense')`);
-    }
-
+    // Execute DDL statements within the transaction
     for (const stmt of createTableStatements) {
-      if (!stmt.includes('CREATE TYPE')) { // Skip the ENUM creation as it was done above
          await client.query(stmt);
-      }
     }
 
     await setupSingleCompanyAndAdmin(client);
@@ -216,7 +212,8 @@ async function initializeDb() {
     console.error("❌ [db.js] Database initialization FAILED:", err.message);
     if (client) {
       try {
-        await client.query('ROLLBACK');
+        // Rollback only if the BEGIN succeeded
+        await client.query('ROLLBACK'); 
         console.log('ℹ️ [db.js] Initialization rollback successful.');
       } catch (rollbackErr) {
         console.error('❌ [db.js] Failed to rollback initialization transaction:', rollbackErr.message);
@@ -245,13 +242,21 @@ async function setupSingleCompanyAndAdmin(client) {
                 bcrypt.hash('admin', 10, (err, h) => err ? reject(err) : resolve(h));
             });
             
-            const insertUserResult = await client.query(
-                `INSERT INTO users (id, username, password, role, email, active_company_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-                [companyId, 'admin', hash, 'admin', 'admin@example.com', companyId]
-            );
+            // Attempt to insert with ID 1 to maintain consistency if table is empty
+            let insertUserSql = `INSERT INTO users (username, password, role, email, active_company_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`;
+            let insertUserParams = ['admin', hash, 'admin', 'admin@example.com', companyId];
+            
+            // If the companies table wasn't empty and generated a new ID, we must insert user without explicit ID 1
+            if (companyId === 1) {
+                // If company ID is 1, let's explicitly try to set user ID 1 too for the default admin.
+                insertUserSql = `INSERT INTO users (id, username, password, role, email, active_company_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET active_company_id = EXCLUDED.active_company_id RETURNING id`;
+                insertUserParams = [1, 'admin', hash, 'admin', 'admin@example.com', companyId];
+            }
+
+            const insertUserResult = await client.query(insertUserSql, insertUserParams);
             const adminId = insertUserResult.rows[0].id;
             
-            await client.query(`INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)`, [adminId, companyId]);
+            await client.query(`INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [adminId, companyId]);
             console.log("✅ Default admin user created and linked to company.");
 
         } else {
@@ -263,8 +268,6 @@ async function setupSingleCompanyAndAdmin(client) {
     };
 
     if (companyCheck.rows.length === 0) {
-        // PostgreSQL does not like explicit ID insert on SERIAL column unless identity is explicitly reset.
-        // We will insert without ID and update the ID sequence IF the insertion resulted in an ID > 1.
         
         const defaultCompanySql = `INSERT INTO companies (company_name, address_line1, address_line2, city_pincode, state, state_code, gstin, phone, email, bank_name, bank_account_no, bank_ifsc_code) 
                                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`;
@@ -285,13 +288,13 @@ async function setupSingleCompanyAndAdmin(client) {
         ];
         
         const insertResult = await client.query(defaultCompanySql, defaultCompanyParams);
-        companyId = insertResult.rows[0].id; // Get the generated ID
+        companyId = insertResult.rows[0].id; 
         
-        // If the generated ID is NOT 1 (because the table wasn't completely empty), this might cause FK issues.
-        // For simplicity and to ensure the admin links correctly, we proceed with the generated ID.
         if (companyId !== 1) {
              console.warn(`⚠️ Default company generated ID ${companyId}. Expected 1. Proceeding with generated ID.`);
         } else {
+            // Force the sequence back to 1 if we inserted ID 1, ensuring consistency
+            await client.query("SELECT setval('companies_id_seq', 1, false)");
             console.log("✅ Default company (Adventurer Export) created with ID 1.");
         }
         
