@@ -45,8 +45,8 @@ router.get('/', async (req, res) => {
 
     if (!companyId) return res.status(400).json({ error: "No active company selected for the user." });
     
-    // FIX: Use boolean literal TRUE for PG
-    const activeFilter = !showInactive ? 'AND p.is_active = TRUE' : '';
+    // FIX: Use integer 1 (active) instead of boolean TRUE, as the column type is INTEGER
+    const activeFilter = !showInactive ? 'AND p.is_active = 1' : '';
     
     const sql = `
         SELECT
@@ -54,11 +54,11 @@ router.get('/', async (req, res) => {
             (SELECT l.lender_name 
              FROM product_suppliers ps_pref 
              JOIN lenders l ON ps_pref.supplier_id = l.id 
-             -- FIX: Use boolean literal TRUE for PG
+             -- ps_pref.is_preferred is BOOLEAN, so TRUE is correct here
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = TRUE LIMIT 1) as preferred_supplier_name,
             (SELECT ps_pref.purchase_price 
              FROM product_suppliers ps_pref 
-             -- FIX: Use boolean literal TRUE for PG
+             -- ps_pref.is_preferred is BOOLEAN, so TRUE is correct here
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = TRUE LIMIT 1) as preferred_supplier_purchase_price
         FROM products p
         WHERE p.company_id = $1 ${activeFilter}
@@ -193,7 +193,7 @@ router.put('/:id', async (req, res) => {
     const params = [
         product_name, sku || null, description || null, parsedCostPrice, parsedSalePrice, parsedCurrentStock,
         unit_of_measure || 'pcs', low_stock_threshold ? parseInt(low_stock_threshold) : 0, hsn_acs_code || null,
-        reorder_level ? parseInt(reorder_level) : 0, is_active === 0 ? false : true, id, companyId
+        reorder_level ? parseInt(reorder_level) : 0, (is_active === 0 || is_active === false) ? 0 : 1, id, companyId // FIXED: Ensure is_active is 0 or 1
     ];
 
     try {
@@ -266,7 +266,8 @@ router.put('/:id/deactivate', async (req, res) => {
     const companyId = req.user.active_company_id;
     if (!companyId) return res.status(400).json({ error: "Company not identified." });
 
-    const sql = `UPDATE products SET is_active = FALSE, updated_at = NOW() WHERE id = $1 AND company_id = $2`;
+    // FIX: Use integer 0 instead of FALSE
+    const sql = `UPDATE products SET is_active = 0, updated_at = NOW() WHERE id = $1 AND company_id = $2`;
     try {
         const result = await dbQuery(sql, [id, companyId]);
         if (result.rowCount === 0) return res.status(404).json({ error: "Product not found or no permission." });
@@ -282,7 +283,8 @@ router.put('/:id/reactivate', async (req, res) => {
     const companyId = req.user.active_company_id;
     if (!companyId) return res.status(400).json({ error: "Company not identified." });
     
-    const sql = `UPDATE products SET is_active = TRUE, updated_at = NOW() WHERE id = $1 AND company_id = $2`;
+    // FIX: Use integer 1 instead of TRUE
+    const sql = `UPDATE products SET is_active = 1, updated_at = NOW() WHERE id = $1 AND company_id = $2`;
     try {
         const result = await dbQuery(sql, [id, companyId]);
         if (result.rowCount === 0) return res.status(404).json({ error: "Product not found or no permission." });
