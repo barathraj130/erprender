@@ -54,9 +54,11 @@ router.get('/', async (req, res) => {
             (SELECT l.lender_name 
              FROM product_suppliers ps_pref 
              JOIN lenders l ON ps_pref.supplier_id = l.id 
+             -- FIX: Use boolean literal TRUE for PG
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = TRUE LIMIT 1) as preferred_supplier_name,
             (SELECT ps_pref.purchase_price 
              FROM product_suppliers ps_pref 
+             -- FIX: Use boolean literal TRUE for PG
              WHERE ps_pref.product_id = p.id AND ps_pref.is_preferred = TRUE LIMIT 1) as preferred_supplier_purchase_price
         FROM products p
         WHERE p.company_id = $1 ${activeFilter}
@@ -68,6 +70,7 @@ router.get('/', async (req, res) => {
         res.json(rows || []);
     } catch (err) {
         console.error("Error fetching products for company:", err.message);
+        // Returning the error details here is helpful for front-end debugging.
         return res.status(500).json({ error: "Failed to fetch products.", details: err.message });
     }
 });
