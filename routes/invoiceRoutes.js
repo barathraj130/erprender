@@ -43,15 +43,19 @@ async function generateNotificationForLowStock(client, productId, companyId) {
 async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, companyId, invoiceData, processedLineItems) {
     const { customer_id, invoice_number, total_amount, paid_amount, invoice_type, invoice_date, newPaymentMethod } = invoiceData;
     
+    // Ensure customer_id is strictly an integer for insertion params
+    const finalCustomerId = parseInt(customer_id);
+
     // 1. Create the main Sale/Credit Note transaction (Affects Receivable)
     if (parseFloat(total_amount) !== 0) {
         const isReturn = invoice_type === 'SALES_RETURN';
         const saleCategoryName = isReturn ? "Product Return from Customer (Credit Note)" : "Sale to Customer (On Credit)";
         const saleTxActualAmount = parseFloat(total_amount); 
         
-        const saleTransactionSql = `INSERT INTO transactions (company_id, user_id, amount, description, category, date, related_invoice_id) 
-                                    VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`;
-        const saleTransactionParams = [companyId, customer_id, saleTxActualAmount, isReturn ? `Credit Note for ${invoice_number}` : `Invoice ${invoice_number}`, saleCategoryName, invoice_date, invoiceId];
+        // Explicitly include NULL for lender_id/agreement_id in Sale transaction
+        const saleTransactionSql = `INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) 
+                                    VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7) RETURNING id`;
+        const saleTransactionParams = [companyId, finalCustomerId, saleTxActualAmount, isReturn ? `Credit Note for ${invoice_number}` : `Invoice ${invoice_number}`, saleCategoryName, invoice_date, invoiceId];
         
         const saleTxResult = await client.query(saleTransactionSql, saleTransactionParams);
         const saleTransactionId = saleTxResult.rows[0].id;
@@ -89,11 +93,12 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
         // Negative amount for payment received (Cash/Bank increase, Receivable decreases)
         const paymentTxActualAmount = amountSign * Math.abs(currentPaymentMade); 
         
-        const paymentTransactionSql = `INSERT INTO transactions (company_id, user_id, amount, description, category, date, related_invoice_id) 
-                                       VALUES ($1, $2, $3, $4, $5, $6, $7)`;
+        // FIX: Explicitly specify NULL for lender_id and agreement_id
+        const paymentTransactionSql = `INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) 
+                                       VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7)`;
         const paymentTransactionParams = [
             companyId, 
-            customer_id, 
+            finalCustomerId, 
             paymentTxActualAmount, 
             `Payment/Refund for Invoice ${invoice_number}`, 
             paymentCategoryName, 
