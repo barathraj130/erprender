@@ -607,13 +607,17 @@ function setupEventListeners() {
     }
 }//ADD THESE NEW FUNCTIONS TO SCRIPT.JS ---
 // In app-script.js
-
 async function handleCompanyProfileSubmit(e) {
     e.preventDefault();
     
-    const companyId = document.getElementById('companyId').value;
+    // Get companyId from the hidden input OR the global user session data (redundancy fix)
+    let companyId = document.getElementById('companyId').value;
+    if (!companyId && currentUser && currentUser.active_company_id) {
+        companyId = currentUser.active_company_id;
+    }
+
     if (!companyId) {
-        alert("Error: Cannot save profile. Company ID is missing.");
+        alert("Error: Cannot save profile. Company ID is missing. (Please ensure you are logged in to an active company.)");
         return;
     }
 
@@ -627,7 +631,7 @@ async function handleCompanyProfileSubmit(e) {
         email: document.getElementById('company_email_input').value.trim(),
         bank_name: document.getElementById('company_bank_name_input').value.trim(),
         bank_account_no: document.getElementById('company_bank_account_no_input').value.trim(),
-        bank_ifsc_code: document.getElementById('company_bank_ifsc_code_input').value.trim(),
+        bank_ifsc_code: document.getElementById('company_bank_ifsc_input').value.trim(),
     };
 
     if (!data.company_name) {
@@ -650,7 +654,6 @@ async function handleCompanyProfileSubmit(e) {
         alert("Company profile updated successfully!");
         
         // 1. Invalidate cache and reload the new profile data
-        // We set the cache to null/default profile temporarily to force a refresh on the next call
         businessProfileCache = null; 
         await loadBusinessProfile(); 
         
