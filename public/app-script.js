@@ -1225,28 +1225,26 @@ function displayTransactions(transactionsToDisplay) {
         let amountClass = '';
         let displayAmount = Math.abs(ledgerAmount);
 
+        // --- START FIX 1 (Visual consistency in Transactions List) ---
         if (catInfo) {
-            if (catInfo.type.includes('income') && !catInfo.type.includes('liability')) {
-                amountClass = 'positive';
-            } 
-            else if (catInfo.type.includes('income') && catInfo.type.includes('liability')) {
+            if (ledgerAmount > 0) {
+                // Positive amount (Inflow, Revenue, or Receivable Increase)
+                if (catInfo.type === 'receivable_increase' || catInfo.type === 'payable_increase') {
+                    amountClass = 'receivable'; 
+                } else {
+                    amountClass = 'positive';
+                }
+            } else if (ledgerAmount < 0) {
+                // Negative amount (Outflow, Expense, or Payable/Receivable Decrease)
+                amountClass = 'negative';
+            } else {
                 amountClass = 'info'; 
             }
-            else if (catInfo.type.includes('expense')) {
-                amountClass = 'negative';
-            }
-            else if (catInfo.type === 'receivable_increase') {
-                amountClass = 'receivable'; 
-            }
-            else if (catInfo.type === 'payable_increase') {
-                amountClass = 'negative'; 
-            }
-            else {
-                amountClass = ledgerAmount >= 0 ? 'positive' : 'negative';
-            }
         } else {
+            // Fallback sign display
             amountClass = ledgerAmount >= 0 ? 'positive' : 'negative';
         }
+        // --- END FIX 1 ---
         
         const formattedDate = formatLedgerDate(tx.date || tx.created_at);
 
