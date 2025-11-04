@@ -42,14 +42,11 @@ async function generateNotificationForLowStock(client, productId, companyId) {
 }
 
 async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, companyId, invoiceData, processedLineItems) {
-    // ... (This function relies on client.query, which we know works)
     const { customer_id, invoice_number, total_amount, paid_amount, invoice_type, invoice_date, newPaymentMethod } = invoiceData;
     
     // 1. Create the main Sale/Credit Note transaction
     if (parseFloat(total_amount) !== 0) {
         const isReturn = invoice_type === 'SALES_RETURN';
-        // Note: Sale Tx amount is POSITIVE, reflecting an increase in receivable for credit sales, or
-        // a negative decrease in receivable for a return (Credit Note).
         const saleCategoryName = isReturn ? "Product Return from Customer (Credit Note)" : "Sale to Customer (On Credit)";
         const saleTxActualAmount = parseFloat(total_amount); 
         
@@ -65,7 +62,7 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
             
             const stockChange = item.quantity; 
             
-            // Update Stock (Negative stockChange means sale, positive means return)
+            // Update Stock
             const updateStockSql = `UPDATE products SET current_stock = current_stock + $1, updated_at = NOW() WHERE id = $2 AND company_id = $3`;
             await client.query(updateStockSql, [ -stockChange, item.product_id, companyId]);
 
@@ -80,9 +77,9 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
     // 2. Create the payment/refund transaction ONLY if a payment was made now
     const currentPaymentMade = parseFloat(paid_amount) || 0;
     if (currentPaymentMade !== 0 && newPaymentMethod) {
+        
         let paymentCategoryName;
-        // Payment: positive currentPaymentMade means payment received, tx amount should be NEGATIVE (reducing receivable)
-        // Refund: negative currentPaymentMade means refund given, tx amount should be POSITIVE (increasing receivable)
+        const amountSign = currentPaymentMade > 0 ? -1 : 1; 
 
         if (newPaymentMethod.toLowerCase() === 'cash') {
             paymentCategoryName = currentPaymentMade > 0 ? "Payment Received from Customer (Cash)" : "Product Return from Customer (Refund via Cash)";
@@ -90,17 +87,30 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
             paymentCategoryName = currentPaymentMade > 0 ? "Payment Received from Customer (Bank)" : "Product Return from Customer (Refund via Bank)";
         }
         
-        // This calculates the correct sign for the transaction amount (Negative for income/payment received)
-        const paymentTxActualAmount = currentPaymentMade > 0 ? -currentPaymentMade : Math.abs(currentPaymentMade); 
+        // Negative amount for payment received (Cash/Bank increase, Receivable decreases)
+        const paymentTxActualAmount = amountSign * Math.abs(currentPaymentMade); 
         
         const paymentTransactionSql = `INSERT INTO transactions (company_id, user_id, amount, description, category, date, related_invoice_id) 
                                        VALUES ($1, $2, $3, $4, $5, $6, $7)`;
-        const paymentTransactionParams = [companyId, customer_id, paymentTxActualAmount, `Payment/Refund for Invoice ${invoice_number}`, paymentCategoryName, invoice_date, invoiceId];
+        const paymentTransactionParams = [
+            companyId, 
+            customer_id, 
+            paymentTxActualAmount, 
+            `Payment/Refund for Invoice ${invoice_number}`, 
+            paymentCategoryName, 
+            invoice_date, 
+            invoiceId
+        ];
+        
+        // --- DEBUG LOGGING ---
+        console.log("DEBUG: Attempting to insert Payment Transaction:", paymentTransactionParams);
+        // --- END DEBUG LOGGING ---
         
         await client.query(paymentTransactionSql, paymentTransactionParams);
+        console.log("DEBUG: Payment Transaction successfully inserted.");
     }
 }
-// ------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 
 // GET all invoices
@@ -364,8 +374,6 @@ router.put('/:id', async (req, res) => {
         const final_total_amount = amount_before_tax + total_cgst_amount + total_sgst_amount + total_igst_amount - (parseFloat(party_bill_returns_amount) || 0);
 
         // --- 3. Update the invoice header ---
-        // NOTE: We rely on the fact that Revert (Step 1) handled the old paid amount, 
-        // and we only add the new delta (initialPaymentAmount) here.
         const updateInvoiceSql = `UPDATE invoices SET customer_id = $1, invoice_number = $2, invoice_date = $3, due_date = $4, total_amount = $5, amount_before_tax = $6, total_cgst_amount = $7, total_sgst_amount = $8, total_igst_amount = $9, party_bill_returns_amount = $10, status = $11, invoice_type = $12, notes = $13, paid_amount = paid_amount + $14, reverse_charge = $15, transportation_mode = $16, vehicle_number = $17, date_of_supply = $18, place_of_supply_state = $19, place_of_supply_state_code = $20, bundles_count = $21, consignee_name = $22, consignee_address_line1 = $23, consignee_address_line2 = $24, consignee_city_pincode = $25, consignee_state = $26, consignee_gstin = $27, consignee_state_code = $28, amount_in_words = $29, original_invoice_number = $30, updated_at = NOW() WHERE id = $31 AND company_id = $32 RETURNING id`;
         
         const updateParams = [customer_id, invoice_number, invoice_date, due_date, final_total_amount, amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, party_bill_returns_amount, status, invoice_type, notes, initialPaymentAmount, reverse_charge, transportation_mode, vehicle_number, date_of_supply, place_of_supply_state, place_of_supply_state_code, bundles_count, consignee_name, consignee_address_line1, consignee_address_line2, consignee_city_pincode, consignee_state, consignee_gstin, consignee_state_code, amount_in_words, original_invoice_number, id, companyId];
