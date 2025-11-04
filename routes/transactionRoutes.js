@@ -182,7 +182,6 @@ router.get('/', async (req, res) => {
         LEFT JOIN users u ON t.user_id = u.id
         LEFT JOIN lenders le ON t.lender_id = le.id
         LEFT JOIN invoices i ON t.related_invoice_id = i.id 
-        WHERE t.category NOT LIKE 'Opening Balance - %' AND t.category != 'Opening Balance Adjustment'
         ORDER BY t.date DESC, t.id DESC`;
     
     try {

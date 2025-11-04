@@ -1103,7 +1103,6 @@ async function loadAllTransactions() {
         isLoading.transactions = false;
     }
 }
-// Replace the existing displayTransactions function
 function displayTransactions(transactionsToDisplay) {
     const table = document.getElementById("transactionTable");
     if (!table) {
@@ -1112,17 +1111,24 @@ function displayTransactions(transactionsToDisplay) {
     }
     const tbody = table.querySelector("tbody") || table;
     tbody.innerHTML = "";
+    
+    // --- FIX: Filter out dedicated Opening Balance transactions for display ---
+    const filteredForDisplay = transactionsToDisplay.filter(tx => 
+        !tx.category.startsWith('Opening Balance - ') && tx.category !== 'Opening Balance Adjustment'
+    );
+    // --- END FIX ---
+
     if (
-        !Array.isArray(transactionsToDisplay) ||
-        transactionsToDisplay.length === 0
+        !Array.isArray(filteredForDisplay) ||
+        filteredForDisplay.length === 0
     ) {
         tbody.innerHTML =
-            '<tr><td colspan="7" style="text-align:center;">No transactions found.</td></tr>';
+            '<tr><td colspan="7" style="text-align:center;">No standard transactions found.</td></tr>';
         return;
     }
 
     // Correctly sort by date descending, then by ID descending
-    const sortedTransactions = transactionsToDisplay.sort((a, b) => {
+    const sortedTransactions = filteredForDisplay.sort((a, b) => {
         const dateA = new Date(a.date);
         const dateB = new Date(b.date);
         if (dateB - dateA !== 0) {
@@ -1131,7 +1137,6 @@ function displayTransactions(transactionsToDisplay) {
         return b.id - a.id;
     });
     
-    // --- FIX: Initialize serial number to total count and decrement ---
     let serialNumber = sortedTransactions.length;
 
     sortedTransactions.forEach((tx) => {
@@ -1178,7 +1183,6 @@ function displayTransactions(transactionsToDisplay) {
             amountClass = ledgerAmount >= 0 ? 'positive' : 'negative';
         }
         
-        // FIX 1: Use formatLedgerDate helper for display
         const formattedDate = formatLedgerDate(tx.date || tx.created_at);
 
         row.innerHTML = `
@@ -1194,7 +1198,6 @@ function displayTransactions(transactionsToDisplay) {
             </td>`;
     });
 }
-
 function showLedger(type) {
     document.getElementById("cashLedgerContent").style.display = "none";
     document.getElementById("bankLedgerContent").style.display = "none";
