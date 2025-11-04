@@ -1394,6 +1394,7 @@ async function loadBankLedger(date = null) {
     tfoot.innerHTML = "";
 
     try {
+        // Ensure data is loaded
         if(usersDataCache.length === 0 && !isLoading.users) await loadUsers();
         if(allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
         if(externalEntitiesCache.length === 0 && !isLoading.lenders) await loadLenders();
@@ -1401,50 +1402,50 @@ async function loadBankLedger(date = null) {
         const selectedDateNormalized = new Date(selectedDate).toISOString().split("T")[0];
         let openingBankBalance = 0;
 
-        // --- REVISED FIX: Calculate opening balance based on ALL relevant transactions BEFORE the selected date. ---
+        // --- Calculate opening balance based on ALL relevant transactions BEFORE the selected date. ---
         allTransactionsCache
             .filter((t) => {
                 const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
                 return txDateNormalized && txDateNormalized < selectedDateNormalized;
             })
             .forEach((t) => {
-                const catInfo = transactionCategories.find( 
-                    (c) => c.name === t.category,
-                );
+                const catInfo = transactionCategories.find( (c) => c.name === t.category );
                 if (!catInfo || !catInfo.affectsLedger || !catInfo.affectsLedger.includes("bank")) return;
 
                 let actualBankFlow = 0;
                 
+                // Use the raw amount if it's the dedicated opening balance entry
                 if (t.category === 'Opening Balance - Bank') {
                     actualBankFlow = parseFloat(t.amount || 0); 
-                } else if (catInfo.type.includes("income")) { 
-                     actualBankFlow = Math.abs(parseFloat(t.amount || 0));
+                } else if (catInfo.type.includes("income")) {
+                    actualBankFlow = Math.abs(parseFloat(t.amount || 0));
                 } else if (catInfo.type.includes("expense")) {
                     actualBankFlow = -Math.abs(parseFloat(t.amount || 0));
-                } else if (catInfo.name === 'Cash Deposited to Bank') {
+                } else if (catInfo.name === 'Cash Deposited to Bank') { 
                     actualBankFlow = Math.abs(parseFloat(t.amount || 0));
-                } else if (catInfo.name === 'Cash Withdrawn from Bank') {
+                } else if (catInfo.name === 'Cash Withdrawn from Bank') { 
                     actualBankFlow = -Math.abs(parseFloat(t.amount || 0));
                 }
                 openingBankBalance += actualBankFlow;
             });
-        // --- END REVISED FIX ---
+        // --- END Opening Balance Calculation ---
 
-        // --- REVISED FIX: Entries now include ALL relevant transactions ON the selected date. ---
+        // --- Entries ON the selected date. ---
         const entries = allTransactionsCache
             .filter((t) => {
-                const catInfo = transactionCategories.find( 
-                    (c) => c.name === t.category,
-                );
-                 // Include ALL transactions on the selected date that affect bank
+                const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
+                const catInfo = transactionCategories.find( (c) => c.name === t.category );
+                
+                // We MUST also include the Opening Balance entry if it exists on this date
                 return (
-                    t.date === selectedDate &&
+                    txDateNormalized === selectedDateNormalized &&
                     catInfo &&
                     catInfo.affectsLedger &&
                     catInfo.affectsLedger.includes("bank")
                 );
             })
             .sort((a, b) => {
+                // Ensure the Opening Balance is processed first if multiple entries exist on this day
                 if (a.category === 'Opening Balance - Bank') return -1;
                 if (b.category === 'Opening Balance - Bank') return 1;
                 return (a.id || 0) - (b.id || 0);
@@ -1463,14 +1464,13 @@ async function loadBankLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No bank transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                const catInfo = transactionCategories.find(
-                    (c) => c.name === entry.category,
-                );
+                const catInfo = transactionCategories.find((c) => c.name === entry.category);
                 let debit = ""; 
                 let credit = ""; 
                 let actualBankFlowForEntry = 0;
                 
                 if (entry.category === 'Opening Balance - Bank') {
+                    // Use raw amount, expected positive
                     actualBankFlowForEntry = parseFloat(entry.amount || 0);
                 } else if (catInfo.type.includes("income")) {
                     actualBankFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
@@ -1501,7 +1501,7 @@ async function loadBankLedger(date = null) {
                     displayName = entity ? entity.lender_name : `Ext. Entity ID ${entry.lender_id}`;
                 }
                 
-                let particularsDisplay = entry.category === 'Opening Balance - Bank' ? 'Opening Balance Entry' : displayName;
+                let particularsDisplay = entry.category.startsWith('Opening Balance') ? entry.category : displayName;
 
                 const row = tbody.insertRow();
                 row.innerHTML = `<td>${formatLedgerDate(entry.date)}</td><td>${particularsDisplay}</td><td>${entry.description || "-"}</td><td>${entry.category || "-"}</td><td class="num positive">${debit ? "₹" + debit : ""}</td><td class="num negative">${credit ? "₹" + credit : ""}</td><td class="num ${runningBankBalance >= 0 ? "positive-balance" : "negative-balance"}">₹${runningBankBalance.toFixed(2)}</td>`;
