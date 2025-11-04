@@ -20,7 +20,6 @@ async function dbQuery(sql, params = []) {
 // --- Transactional Helpers (Fully Async PG using client) ---
 
 async function generateNotificationForLowStock(client, productId, companyId) {
-    // ... (This function relies on client.query, which we know works)
     const productSql = `SELECT product_name, current_stock, low_stock_threshold 
                         FROM products WHERE id = $1 AND company_id = $2`;
     const productResult = await client.query(productSql, [productId, companyId]);
@@ -44,7 +43,7 @@ async function generateNotificationForLowStock(client, productId, companyId) {
 async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, companyId, invoiceData, processedLineItems) {
     const { customer_id, invoice_number, total_amount, paid_amount, invoice_type, invoice_date, newPaymentMethod } = invoiceData;
     
-    // 1. Create the main Sale/Credit Note transaction
+    // 1. Create the main Sale/Credit Note transaction (Affects Receivable)
     if (parseFloat(total_amount) !== 0) {
         const isReturn = invoice_type === 'SALES_RETURN';
         const saleCategoryName = isReturn ? "Product Return from Customer (Credit Note)" : "Sale to Customer (On Credit)";
@@ -74,7 +73,7 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
         }
     }
 
-    // 2. Create the payment/refund transaction ONLY if a payment was made now
+    // 2. Create the payment/refund transaction (Affects Cash/Bank and Receivable)
     const currentPaymentMade = parseFloat(paid_amount) || 0;
     if (currentPaymentMade !== 0 && newPaymentMethod) {
         
@@ -148,7 +147,6 @@ router.get('/:id', async (req, res) => {
         if (!invoice) return res.status(404).json({ error: "Invoice not found or you do not have permission to view it." });
 
         // Consignee fallback logic (JS only)
-        // ... (JS logic for populating consignee details)
         
         const itemsSql = `SELECT ili.*, p.product_name, p.sku as product_sku, COALESCE(ili.hsn_acs_code, p.hsn_acs_code) as final_hsn_acs_code, COALESCE(ili.unit_of_measure, p.unit_of_measure) as final_unit_of_measure 
                           FROM invoice_line_items ili 
