@@ -1310,40 +1310,24 @@ async function loadCashLedger(date = null) {
         const selectedDateNormalized = new Date(selectedDate).toISOString().split("T")[0];
         let openingCashBalance = 0;
         
-        // --- REVISED FIX: Calculate opening balance based on ALL relevant transactions BEFORE the selected date. ---
+        // 1. Calculate opening balance based on ALL relevant transactions BEFORE the selected date.
         allTransactionsCache
             .filter((t) => {
                 const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
-                // Include ALL transactions (including Opening Balance) before the cutoff date
-                return txDateNormalized && txDateNormalized < selectedDateNormalized;
+                const catInfo = transactionCategories.find( (c) => c.name === t.category );
+                
+                // Only include transactions *before* the cutoff date that affect cash
+                if (txDateNormalized && txDateNormalized < selectedDateNormalized && catInfo && catInfo.affectsLedger && catInfo.affectsLedger.includes("cash")) {
+                    return true;
+                }
+                return false;
             })
             .forEach((t) => {
-                const catInfo = transactionCategories.find( 
-                    (c) => c.name === t.category,
-                );
-                if (!catInfo || !catInfo.affectsLedger || !catInfo.affectsLedger.includes("cash")) return;
-                
-                let actualCashFlow = 0;
-                
-                if (catInfo.type.includes("income") || catInfo.group === "customer_payment" || catInfo.name === 'Cash Withdrawn from Bank' || catInfo.name === 'Opening Balance - Cash') {
-                    // Cash In (Debit, positive flow)
-                    actualCashFlow = Math.abs(parseFloat(t.amount || 0));
-                } else if (catInfo.type.includes("expense") || catInfo.group === "supplier_payment" || catInfo.name === 'Cash Deposited to Bank') {
-                    // Cash Out (Credit, negative flow)
-                    actualCashFlow = -Math.abs(parseFloat(t.amount || 0));
-                }
-                
-                // Note: For Opening Balance, we trust the sign if it was negative, but typically it should be positive for an asset.
-                // We simplify by taking the absolute value for calculation based on catInfo logic above.
-                if (t.category === 'Opening Balance - Cash') {
-                     actualCashFlow = parseFloat(t.amount || 0); // Use raw amount for simplicity if only one entry is expected
-                }
-                
-                openingCashBalance += actualCashFlow;
+                // Rely solely on the stored sign of t.amount (Positive = Inflow/Debit)
+                openingCashBalance += parseFloat(t.amount || 0); 
             });
-        // --- END REVISED FIX ---
         
-        // --- REVISED FIX: Entries now include ALL relevant transactions ON the selected date. ---
+        // 2. Filter transactions ON the selected date.
         const entries = allTransactionsCache
             .filter((t) => {
                 const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
@@ -1381,36 +1365,21 @@ async function loadCashLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No cash transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                const catInfo = transactionCategories.find( 
-                    (c) => c.name === entry.category,
-                );
+                const entryAmount = parseFloat(entry.amount || 0);
+                
                 let debit = ""; 
                 let credit = ""; 
-                let actualCashFlowForEntry = 0;
-
-                // Determine cash flow
-                if (entry.category === 'Opening Balance - Cash') {
-                    // Use raw amount, expected to be positive for debit
-                    actualCashFlowForEntry = parseFloat(entry.amount || 0); 
-                } else if (catInfo.type.includes("income") || catInfo.group === "customer_payment") {
-                     actualCashFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
-                } else if (catInfo.type.includes("expense") || catInfo.group === "supplier_payment") {
-                    actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
-                } else if (catInfo.name === 'Cash Withdrawn from Bank') { 
-                     actualCashFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
-                } else if (catInfo.name === 'Cash Deposited to Bank') { 
-                    actualCashFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
+                
+                // If amount is positive -> Debit (IN); if negative -> Credit (OUT)
+                if(entryAmount > 0) {
+                    debit = entryAmount.toFixed(2);
+                    dailyTotalDebits += entryAmount;
+                } else {
+                    credit = Math.abs(entryAmount).toFixed(2);
+                    dailyTotalCredits += Math.abs(entryAmount);
                 }
                 
-                if(actualCashFlowForEntry > 0) {
-                    debit = actualCashFlowForEntry.toFixed(2);
-                    dailyTotalDebits += actualCashFlowForEntry;
-                } else {
-                    credit = Math.abs(actualCashFlowForEntry).toFixed(2);
-                    dailyTotalCredits += Math.abs(actualCashFlowForEntry);
-                }
-
-                runningCashBalance += actualCashFlowForEntry;
+                runningCashBalance += entryAmount;
 
                 // Use formatLedgerDate helper for date display
                 const formattedDate = formatLedgerDate(entry.date);
@@ -1465,41 +1434,30 @@ async function loadBankLedger(date = null) {
         const selectedDateNormalized = new Date(selectedDate).toISOString().split("T")[0];
         let openingBankBalance = 0;
 
-        // --- Calculate opening balance based on ALL relevant transactions BEFORE the selected date. ---
+        // 1. Calculate opening balance based on ALL relevant transactions BEFORE the selected date.
         allTransactionsCache
             .filter((t) => {
                 const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
-                return txDateNormalized && txDateNormalized < selectedDateNormalized;
+                const catInfo = transactionCategories.find( (c) => c.name === t.category );
+                
+                // Only include transactions *before* the cutoff date that affect bank
+                if (txDateNormalized && txDateNormalized < selectedDateNormalized && catInfo && catInfo.affectsLedger && catInfo.affectsLedger.includes("bank")) {
+                    return true;
+                }
+                return false;
             })
             .forEach((t) => {
-                const catInfo = transactionCategories.find( (c) => c.name === t.category );
-                if (!catInfo || !catInfo.affectsLedger || !catInfo.affectsLedger.includes("bank")) return;
-
-                let actualBankFlow = 0;
-                
-                // Use the raw amount if it's the dedicated opening balance entry
-                if (t.category === 'Opening Balance - Bank') {
-                    actualBankFlow = parseFloat(t.amount || 0); 
-                } else if (catInfo.type.includes("income")) {
-                    actualBankFlow = Math.abs(parseFloat(t.amount || 0));
-                } else if (catInfo.type.includes("expense")) {
-                    actualBankFlow = -Math.abs(parseFloat(t.amount || 0));
-                } else if (catInfo.name === 'Cash Deposited to Bank') { 
-                    actualBankFlow = Math.abs(parseFloat(t.amount || 0));
-                } else if (catInfo.name === 'Cash Withdrawn from Bank') { 
-                    actualBankFlow = -Math.abs(parseFloat(t.amount || 0));
-                }
-                openingBankBalance += actualBankFlow;
+                // Rely solely on the stored sign of t.amount (Positive = Inflow/Debit)
+                openingBankBalance += parseFloat(t.amount || 0);
             });
-        // --- END Opening Balance Calculation ---
 
-        // --- Entries ON the selected date. ---
+        // 2. Filter entries ON the selected date.
         const entries = allTransactionsCache
             .filter((t) => {
                 const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
                 const catInfo = transactionCategories.find( (c) => c.name === t.category );
                 
-                // We MUST also include the Opening Balance entry if it exists on this date
+                // Include ALL transactions on the selected date that affect bank
                 return (
                     txDateNormalized === selectedDateNormalized &&
                     catInfo &&
@@ -1527,33 +1485,21 @@ async function loadBankLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No bank transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                const catInfo = transactionCategories.find((c) => c.name === entry.category);
+                const entryAmount = parseFloat(entry.amount || 0);
+
                 let debit = ""; 
                 let credit = ""; 
-                let actualBankFlowForEntry = 0;
                 
-                if (entry.category === 'Opening Balance - Bank') {
-                    // Use raw amount, expected positive
-                    actualBankFlowForEntry = parseFloat(entry.amount || 0);
-                } else if (catInfo.type.includes("income")) {
-                    actualBankFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
-                } else if (catInfo.type.includes("expense")) {
-                    actualBankFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
-                } else if (catInfo.name === 'Cash Deposited to Bank') { 
-                     actualBankFlowForEntry = Math.abs(parseFloat(entry.amount || 0));
-                } else if (catInfo.name === 'Cash Withdrawn from Bank') { 
-                    actualBankFlowForEntry = -Math.abs(parseFloat(entry.amount || 0));
-                }
-
-                if(actualBankFlowForEntry > 0) {
-                    debit = actualBankFlowForEntry.toFixed(2);
-                    dailyTotalDebits += actualBankFlowForEntry;
+                // If amount is positive -> Debit (IN); if negative -> Credit (OUT)
+                if(entryAmount > 0) {
+                    debit = entryAmount.toFixed(2);
+                    dailyTotalDebits += entryAmount;
                 } else {
-                    credit = Math.abs(actualBankFlowForEntry).toFixed(2);
-                    dailyTotalCredits += Math.abs(actualBankFlowForEntry);
+                    credit = Math.abs(entryAmount).toFixed(2);
+                    dailyTotalCredits += Math.abs(entryAmount);
                 }
                 
-                runningBankBalance += actualBankFlowForEntry;
+                runningBankBalance += entryAmount;
 
                 let displayName = "N/A (Business Internal)";
                 if (entry.user_id) {
