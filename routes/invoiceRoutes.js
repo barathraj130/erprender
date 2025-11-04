@@ -188,6 +188,12 @@ router.post('/', async (req, res) => {
         }
 
         let amount_before_tax = 0, total_cgst_amount = 0, total_sgst_amount = 0, total_igst_amount = 0;
+        
+        // Ensure rates are numerical and default to 0
+        const finalCgstRate = parseFloat(cgst_rate) || 0;
+        const finalSgstRate = parseFloat(sgst_rate) || 0;
+        const finalIgstRate = parseFloat(igst_rate) || 0;
+        
         const processed_line_items = line_items.map(item => {
             const quantity = parseFloat(item.quantity);
             const signedQuantity = isReturn ? -Math.abs(quantity) : Math.abs(quantity);
@@ -195,15 +201,32 @@ router.post('/', async (req, res) => {
             const discount_amount = parseFloat(item.discount_amount || 0);
             const taxable_value = (signedQuantity * unit_price) - discount_amount;
             amount_before_tax += taxable_value;
+            
             let item_cgst = 0, item_sgst = 0, item_igst = 0;
             
-            if (invoice_type === 'TAX_INVOICE' || (isReturn && (cgst_rate > 0 || sgst_rate > 0 || igst_rate > 0))) {
-                if (igst_rate > 0) item_igst = taxable_value * (igst_rate / 100);
-                else { item_cgst = taxable_value * (cgst_rate / 100); item_sgst = taxable_value * (sgst_rate / 100); }
+            if (invoice_type === 'TAX_INVOICE' || (isReturn && (finalCgstRate > 0 || finalSgstRate > 0 || finalIgstRate > 0))) {
+                if (finalIgstRate > 0) item_igst = taxable_value * (finalIgstRate / 100);
+                else { item_cgst = taxable_value * (finalCgstRate / 100); item_sgst = taxable_value * (finalSgstRate / 100); }
             }
-            total_cgst_amount += item_cgst; total_sgst_amount += item_sgst; total_igst_amount += item_igst;
-            return { ...item, quantity: signedQuantity, taxable_value, cgst_rate, cgst_amount: item_cgst, sgst_rate, sgst_amount: item_sgst, igst_rate, igst_amount: item_igst, line_total: taxable_value + item_cgst + item_sgst + item_igst };
+            
+            total_cgst_amount += item_cgst; 
+            total_sgst_amount += item_sgst; 
+            total_igst_amount += item_igst;
+            
+            return { 
+                ...item, 
+                quantity: signedQuantity, 
+                taxable_value, 
+                cgst_rate: finalCgstRate, 
+                cgst_amount: item_cgst, 
+                sgst_rate: finalSgstRate, 
+                sgst_amount: item_sgst, 
+                igst_rate: finalIgstRate, 
+                igst_amount: item_igst, 
+                line_total: taxable_value + item_cgst + item_sgst + item_igst 
+            };
         });
+        
         const final_total_amount = amount_before_tax + total_cgst_amount + total_sgst_amount + total_igst_amount - (parseFloat(party_bill_returns_amount) || 0);
 
         
@@ -213,7 +236,15 @@ router.post('/', async (req, res) => {
         const invoiceSql = `INSERT INTO invoices (company_id, customer_id, invoice_number, invoice_date, due_date, total_amount, amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, party_bill_returns_amount, status, invoice_type, notes, paid_amount, reverse_charge, transportation_mode, vehicle_number, date_of_supply, place_of_supply_state, place_of_supply_state_code, bundles_count, consignee_name, consignee_address_line1, consignee_address_line2, consignee_city_pincode, consignee_state, consignee_gstin, consignee_state_code, amount_in_words, original_invoice_number) 
                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31) RETURNING id`;
                             
-        const invoiceHeaderParams = [companyId, customer_id, invoice_number, invoice_date, due_date, final_total_amount, amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, party_bill_returns_amount, status, invoice_type, notes, initialPaymentAmount, reverse_charge, transportation_mode, vehicle_number, date_of_supply, place_of_supply_state, place_of_supply_state_code, bundles_count, consignee_name, consignee_address_line1, consignee_address_line2, consignee_city_pincode, consignee_state, consignee_gstin, consignee_state_code, amount_in_words, original_invoice_number];
+        const invoiceHeaderParams = [
+            companyId, customer_id, invoice_number, invoice_date, due_date, final_total_amount, 
+            amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, 
+            parseFloat(party_bill_returns_amount) || 0, status, invoice_type, notes, initialPaymentAmount, 
+            reverse_charge, transportation_mode, vehicle_number, date_of_supply, place_of_supply_state, 
+            place_of_supply_state_code, bundles_count, consignee_name, consignee_address_line1, 
+            consignee_address_line2, consignee_city_pincode, consignee_state, consignee_gstin, 
+            consignee_state_code, amount_in_words, original_invoice_number
+        ];
         
         const insertResult = await client.query(invoiceSql, invoiceHeaderParams);
         const invoiceId = insertResult.rows[0].id;
@@ -222,7 +253,12 @@ router.post('/', async (req, res) => {
                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`;
         
         for (const item of processed_line_items) {
-            await client.query(itemInsertSql, [invoiceId, item.product_id, item.description, item.hsn_acs_code, item.unit_of_measure, item.quantity, item.unit_price, item.discount_amount, item.taxable_value, item.cgst_rate, item.cgst_amount, item.sgst_rate, item.sgst_amount, item.igst_rate, item.igst_amount, item.line_total]);
+            await client.query(itemInsertSql, [
+                invoiceId, item.product_id, item.description, item.hsn_acs_code, item.unit_of_measure, 
+                item.quantity, item.unit_price, item.discount_amount, item.taxable_value, 
+                item.cgst_rate, item.cgst_amount, item.sgst_rate, item.sgst_amount, 
+                item.igst_rate, item.igst_amount, item.line_total
+            ]);
         }
         
         // Create associated transactions and stock updates using the transactional client
@@ -236,6 +272,7 @@ router.post('/', async (req, res) => {
         if (error.code === '23505') {
             return res.status(400).json({ error: `An invoice or credit note with number "${invoice_number}" already exists. Please try again.` });
         }
+        // Log the error detail for debugging on the server console
         console.error("Error saving invoice:", error);
         res.status(500).json({ error: "An unexpected error occurred while saving the invoice.", details: error.message });
     } finally {
@@ -284,6 +321,11 @@ router.put('/:id', async (req, res) => {
         const isReturn = invoice_type === 'SALES_RETURN';
         let amount_before_tax = 0, total_cgst_amount = 0, total_sgst_amount = 0, total_igst_amount = 0;
         
+        // Ensure rates are numerical and default to 0
+        const finalCgstRate = parseFloat(cgst_rate) || 0;
+        const finalSgstRate = parseFloat(sgst_rate) || 0;
+        const finalIgstRate = parseFloat(igst_rate) || 0;
+        
         // Recalculate line items 
         const processed_line_items = line_items.map(item => {
             const quantity = parseFloat(item.quantity);
@@ -292,13 +334,26 @@ router.put('/:id', async (req, res) => {
             const discount_amount = parseFloat(item.discount_amount || 0);
             const taxable_value = (signedQuantity * unit_price) - discount_amount;
             amount_before_tax += taxable_value;
+            
             let item_cgst = 0, item_sgst = 0, item_igst = 0;
-            if (invoice_type === 'TAX_INVOICE' || (isReturn && (cgst_rate > 0 || sgst_rate > 0 || igst_rate > 0))) {
-                if (igst_rate > 0) item_igst = taxable_value * (igst_rate / 100);
-                else { item_cgst = taxable_value * (cgst_rate / 100); item_sgst = taxable_value * (sgst_rate / 100); }
+            if (invoice_type === 'TAX_INVOICE' || (isReturn && (finalCgstRate > 0 || finalSgstRate > 0 || finalIgstRate > 0))) {
+                if (finalIgstRate > 0) item_igst = taxable_value * (finalIgstRate / 100);
+                else { item_cgst = taxable_value * (finalCgstRate / 100); item_sgst = taxable_value * (finalSgstRate / 100); }
             }
             total_cgst_amount += item_cgst; total_sgst_amount += item_sgst; total_igst_amount += item_igst;
-            return { ...item, quantity: signedQuantity, taxable_value, cgst_rate, cgst_amount: item_cgst, sgst_rate, sgst_amount: item_sgst, igst_rate, igst_amount: item_igst, line_total: taxable_value + item_cgst + item_sgst + item_igst };
+            
+            return { 
+                ...item, 
+                quantity: signedQuantity, 
+                taxable_value, 
+                cgst_rate: finalCgstRate, 
+                cgst_amount: item_cgst, 
+                sgst_rate: finalSgstRate, 
+                sgst_amount: item_sgst, 
+                igst_rate: finalIgstRate, 
+                igst_amount: item_igst, 
+                line_total: taxable_value + item_cgst + item_sgst + item_igst 
+            };
         });
         const final_total_amount = amount_before_tax + total_cgst_amount + total_sgst_amount + total_igst_amount - (parseFloat(party_bill_returns_amount) || 0);
 

@@ -4280,7 +4280,7 @@ async function handleInvoiceSubmit(e) {
 
         if ( (productId || description) && !isNaN(quantity) && quantity !== 0 && !isNaN(unitPrice) && unitPrice >= 0 && !isNaN(discountAmount) && discountAmount >= 0) {
             lineItems.push({
-                product_id: productId,
+                product_id: productId ? parseInt(productId) : null,
                 description: description || productSelect.options[productSelect.selectedIndex].text, 
                 hsn_acs_code: hsn,
                 unit_of_measure: uom,
@@ -4309,14 +4309,10 @@ async function handleInvoiceSubmit(e) {
         }
     }
     
-    // --- START OF FIX ---
-    // Correctly read the GST rates from the form for all relevant invoice types.
     const cgstRate = (invoiceType === 'TAX_INVOICE' || isReturn) ? (parseFloat(document.getElementById("inv_cgst_rate_overall").value) || 0) : 0;
     const sgstRate = (invoiceType === 'TAX_INVOICE' || isReturn) ? (parseFloat(document.getElementById("inv_sgst_rate_overall").value) || 0) : 0;
     const igstRate = (invoiceType === 'TAX_INVOICE' || isReturn) ? (parseFloat(document.getElementById("inv_igst_rate_overall").value) || 0) : 0;
-    // --- END OF FIX ---
-
-
+    
     const data = {
         invoice_number: document.getElementById("inv_invoice_number_display").value.trim(),
         original_invoice_number: invoiceType === 'SALES_RETURN' ? document.getElementById("original_invoice_number_input").value.trim() : null,
@@ -4327,12 +4323,9 @@ async function handleInvoiceSubmit(e) {
         invoice_type: invoiceType,
         notes: document.getElementById("inv_notes").value.trim(),
         line_items: lineItems,
-        // --- START OF FIX ---
-        // Pass the determined GST rates to the backend.
         cgst_rate: cgstRate,
         sgst_rate: sgstRate,
         igst_rate: igstRate,
-        // --- END OF FIX ---
         party_bill_returns_amount: invoiceType === 'PARTY_BILL' ? (Math.abs(parseFloat(document.getElementById("inv_party_bill_returns_amount").value) || 0)) : 0,
         payment_being_made_now: (paymentMethodForNewPayment && paymentBeingMadeNow !== 0) ? paymentBeingMadeNow : 0,
         payment_method_for_new_payment: (paymentMethodForNewPayment && paymentBeingMadeNow !== 0) ? paymentMethodForNewPayment : null,
@@ -4397,7 +4390,7 @@ async function handleInvoiceSubmit(e) {
         await loadAllTransactions(); 
         await loadProducts();
         await loadUsers();
-        await loadCustomerSummaries(); 
+        loadCustomerSummaries(); 
 
         const cashLedgerActive = document.getElementById("cashLedgerContent")?.style.display !== 'none';
         const bankLedgerActive = document.getElementById("bankLedgerContent")?.style.display !== 'none';
