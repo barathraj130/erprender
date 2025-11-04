@@ -2501,6 +2501,7 @@ async function loadCustomerSummaries() {
         let serialNumber = 1; // For user-friendly row numbering
 
         customersOnly.forEach((user) => {
+            // NOTE: remaining_balance is pre-calculated by partyRoutes.js (using the DB query)
             const receivable = parseFloat(user.remaining_balance || 0);
 
             let loanOutstanding = 0;
@@ -3808,11 +3809,9 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
     }
     populateCustomerDetailsForInvoice();
     
-    // --- START OF FIX ---
     // Explicitly call toggleGstFields after setting up the form, especially for editing.
     toggleGstFields();
-    // --- END OF FIX ---
-
+    
     togglePartyBillReturnsField();
     toggleConsigneeFields();
     toggleOriginalInvoiceSection();
