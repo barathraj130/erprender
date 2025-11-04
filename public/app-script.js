@@ -1246,11 +1246,24 @@ async function loadCashLedger(date = null) {
         const selectedDateNormalized = new Date(selectedDate).toISOString().split("T")[0];
 
         let openingCashBalance = 0;
+        
+        // --- FIX: Calculate opening balance based on ALL transactions BEFORE the selected day. ---
+        // 1. Find the dedicated "Opening Balance - Cash" transaction (if it exists and is before the cutoff)
+        const initialCashTx = allTransactionsCache.find(t => 
+            t.category === 'Opening Balance - Cash' && 
+            new Date(t.date) < new Date(selectedDateNormalized)
+        );
+        
+        if (initialCashTx) {
+            openingCashBalance += parseFloat(initialCashTx.amount || 0);
+        }
+        
+        // 2. Add/Subtract flow from all other relevant transactions before the cutoff date.
         allTransactionsCache
             .filter((t) => {
                 const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
-                // Compare date string up to the day
-                return txDateNormalized && txDateNormalized < selectedDateNormalized;
+                // Exclude the dedicated opening balance transaction from cumulative flow calculation
+                return txDateNormalized && txDateNormalized < selectedDateNormalized && t.category !== 'Opening Balance - Cash';
             })
             .forEach((t) => {
                 const catInfo = transactionCategories.find( 
@@ -1281,12 +1294,13 @@ async function loadCashLedger(date = null) {
                 const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
                 );
-                // Compare against the normalized date string
+                // Compare against the normalized date string AND exclude the opening balance transactions
                 return (
                     txDateNormalized === selectedDateNormalized &&
                     catInfo &&
                     catInfo.affectsLedger &&
-                    catInfo.affectsLedger.includes("cash")
+                    catInfo.affectsLedger.includes("cash") &&
+                    t.category !== 'Opening Balance - Cash'
                 );
             })
             .sort((a, b) => a.id - b.id);
@@ -1385,9 +1399,25 @@ async function loadBankLedger(date = null) {
         if(allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
         if(externalEntitiesCache.length === 0 && !isLoading.lenders) await loadLenders();
 
+        const selectedDateNormalized = new Date(selectedDate).toISOString().split("T")[0];
         let openingBankBalance = 0;
+
+        // --- FIX: Include dedicated "Opening Balance - Bank" transaction if it exists and is earlier ---
+        const initialBankTx = allTransactionsCache.find(t => 
+            t.category === 'Opening Balance - Bank' && 
+            new Date(t.date) < new Date(selectedDateNormalized)
+        );
+        
+        if (initialBankTx) {
+            openingBankBalance += parseFloat(initialBankTx.amount || 0);
+        }
+        
         allTransactionsCache
-            .filter((t) => new Date(t.date) < new Date(selectedDate))
+            .filter((t) => {
+                const txDateNormalized = t.date ? new Date(t.date).toISOString().split("T")[0] : null;
+                // Exclude the dedicated opening balance transaction from cumulative flow calculation
+                return txDateNormalized && txDateNormalized < selectedDateNormalized && t.category !== 'Opening Balance - Bank';
+            })
             .forEach((t) => {
                 const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
@@ -1412,11 +1442,13 @@ async function loadBankLedger(date = null) {
                 const catInfo = transactionCategories.find( 
                     (c) => c.name === t.category,
                 );
+                 // Exclude the dedicated opening balance transaction
                 return (
                     t.date === selectedDate &&
                     catInfo &&
                     catInfo.affectsLedger &&
-                    catInfo.affectsLedger.includes("bank")
+                    catInfo.affectsLedger.includes("bank") &&
+                    t.category !== 'Opening Balance - Bank'
                 );
             })
             .sort((a, b) => a.id - b.id);
@@ -1482,7 +1514,6 @@ async function loadBankLedger(date = null) {
             tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
-
 function printLedger(tableId, ledgerTitle) {
     const ledgerTable = document.getElementById(tableId)?.cloneNode(true);
     if (!ledgerTable) {
@@ -4915,9 +4946,14 @@ function generatePnlReport(transactions, period) {
         const catInfo = transactionCategories.find(c => c.name === tx.category);
         if (!catInfo) return;
 
+        // --- FIX: Exclude all initialization transactions from P&L ---
+        if (catInfo.group === 'opening_balance') return;
+        // --- END FIX ---
+
         const amount = parseFloat(tx.amount || 0);
 
         // Capture other income (e.g., interest received, bank interest)
+        // Check if it's an income transaction AND not related to customers (already counted by invoice revenue or separate payment)
         if (catInfo.type.includes('income') && !catInfo.group.includes('customer_revenue') && !catInfo.group.includes('customer_payment')) {
              otherIncome += Math.abs(amount);
         }

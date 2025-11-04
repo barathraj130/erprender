@@ -108,6 +108,7 @@ router.get('/pnl', async (req, res) => {
     if (!startDate || !endDate) return res.status(400).json({ error: "Start date and end date are required." });
     
     // Converted to PG syntax (COALESCE, $1, $2, $3 placeholders)
+    // NOTE: This SQL relies on the general ledgers being created correctly in db.js (Cash/Bank as Assets).
     const sql = `
         SELECT
             l.name as ledger_name,
