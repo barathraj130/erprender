@@ -424,6 +424,12 @@ function setupEventListeners() {
 
     const companyExpenseForm = document.getElementById("companyExpenseForm");
     if(companyExpenseForm) companyExpenseForm.addEventListener('submit', handleCompanyExpenseSubmit);
+    
+    // --- NEW LISTENER FOR COMPANY PROFILE ---
+    const companyProfileForm = document.getElementById('companyProfileForm');
+    if (companyProfileForm) companyProfileForm.addEventListener('submit', handleCompanyProfileSubmit);
+    // --- END NEW LISTENER ---
+
 
     document.getElementById("loanFundsReceiptForm").addEventListener('submit', handleLoanFundsReceiptSubmit);
     document.getElementById("userForm").addEventListener("submit", handleUserSubmit);
@@ -496,6 +502,7 @@ function setupEventListeners() {
             toggleGstFields();
             togglePartyBillReturnsField();
             toggleConsigneeFields();
+            toggleOriginalInvoiceSection();
         });
     }
     const sameAsCustomerCheckbox = document.getElementById(
@@ -599,7 +606,62 @@ function setupEventListeners() {
         });
     }
 }//ADD THESE NEW FUNCTIONS TO SCRIPT.JS ---
+// In app-script.js
 
+async function handleCompanyProfileSubmit(e) {
+    e.preventDefault();
+    
+    const companyId = document.getElementById('companyId').value;
+    if (!companyId) {
+        alert("Error: Cannot save profile. Company ID is missing.");
+        return;
+    }
+
+    const data = {
+        company_name: document.getElementById('company_name_input').value.trim(),
+        gstin: document.getElementById('company_gstin_input').value.trim(),
+        address_line1: document.getElementById('company_address1_input').value.trim(),
+        city_pincode: document.getElementById('company_city_pincode_input').value.trim(),
+        state: document.getElementById('company_state_input').value.trim(),
+        phone: document.getElementById('company_phone_input').value.trim(),
+        email: document.getElementById('company_email_input').value.trim(),
+        bank_name: document.getElementById('company_bank_name_input').value.trim(),
+        bank_account_no: document.getElementById('company_bank_account_no_input').value.trim(),
+        bank_ifsc_code: document.getElementById('company_bank_ifsc_code_input').value.trim(),
+    };
+
+    if (!data.company_name) {
+        alert("Company Name is required.");
+        return;
+    }
+
+    try {
+        const res = await apiFetch(`${API}/companies/${companyId}`, {
+            method: 'PUT',
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
+        });
+
+        if (!res || !res.ok) {
+            const result = await res.json();
+            throw new Error(result.error || "Failed to update profile.");
+        }
+        
+        alert("Company profile updated successfully!");
+        
+        // 1. Invalidate cache and reload the new profile data
+        // We set the cache to null/default profile temporarily to force a refresh on the next call
+        businessProfileCache = null; 
+        await loadBusinessProfile(); 
+        
+        // 2. Re-populate the form with the new data to confirm changes
+        loadCompanyProfileForEditing(); 
+
+    } catch (error) {
+        console.error("Error saving company profile:", error);
+        alert("Error saving profile: " + error.message);
+    }
+}
 async function loadNotifications() {
     try {
         const res = await apiFetch(`${API}/notifications`);
@@ -6719,11 +6781,12 @@ async function loadOriginalInvoiceForReturn() {
         infoDiv.style.color = 'var(--danger-color)';
     }
 }
-
 async function loadCompanyProfileForEditing() {
-    const profile = await loadBusinessProfile(); // This uses the cached or fetched profile
+    // Ensure the profile is loaded. This function handles caching internally.
+    const profile = await loadBusinessProfile(); 
     if (!profile) return;
 
+    // Assuming IDs exist in dashboard.html
     document.getElementById('companyId').value = profile.id || '';
     document.getElementById('company_name_input').value = profile.company_name || '';
     document.getElementById('company_gstin_input').value = profile.gstin || '';
@@ -6734,5 +6797,5 @@ async function loadCompanyProfileForEditing() {
     document.getElementById('company_email_input').value = profile.email || '';
     document.getElementById('company_bank_name_input').value = profile.bank_name || '';
     document.getElementById('company_bank_account_no_input').value = profile.bank_account_no || '';
-    document.getElementById('company_bank_ifsc_input').value = profile.bank_ifsc_code || '';
+    document.getElementById('company_bank_ifsc_code_input').value = profile.bank_ifsc_code || '';
 }
