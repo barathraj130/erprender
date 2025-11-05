@@ -2,7 +2,7 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
 // --- POSTGRES CONFIGURATION ---
-const DATABASE_URL = process.env.DATABASE_URL || "postgresql://erp_iglu_user:tQ6aeuLk4FIEqsSmYFuSMYFuSMV6FB4xUwqtt@dpg-d4337g7gi27c73fn0os0-a.oregon-postgres.render.com/erp_iglu";
+const DATABASE_URL = process.env.DATABASE_URL || "postgresql://erp_iglu_user:tQ6aeuLk4FIEqsSmYFuSMV6FB4xUwqtt@dpg-d4337g7gi27c73fn0os0-a.oregon-postgres.render.com/erp_iglu";
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
