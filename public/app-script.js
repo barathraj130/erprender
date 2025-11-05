@@ -1540,24 +1540,25 @@ function printLedger(tableId, ledgerTitle) {
 }
 async function handleUserSubmit(e) {
     e.preventDefault();
+    const form = e.target; // Get the form element
     const companyId = currentUser ? currentUser.active_company_id : null;
-    const { 
-        username, email, phone, company, initial_balance, 
-        address_line1, address_line2, city_pincode, state, gstin, state_code 
-    } = e.target;
 
+    // Retrieve input values safely, relying on the 'name' attribute
+    // Note: The 'balance' input in dashboard.html uses name="initial_balance"
+    // Other inputs use names matching their IDs.
     const data = {
-        username: username.value.trim(),
-        email: email.value.trim(),
-        phone: phone.value.trim(),
-        company: company.value.trim(),
-        initial_balance: parseFloat(initial_balance.value),
-        address_line1: address_line1.value.trim(),
-        address_line2: address_line2.value.trim(),
-        city_pincode: city_pincode.value.trim(),
-        state: state.value.trim(),
-        gstin: gstin.value.trim(),
-        state_code: state_code.value.trim(),
+        username: form.username.value.trim(),
+        email: form.email ? form.email.value.trim() : null, 
+        phone: form.phone ? form.phone.value.trim() : null,
+        company: form.company ? form.company.value.trim() : null,
+        initial_balance: parseFloat(form.initial_balance.value), // CRITICAL: Ensure correct name attribute reference
+        address_line1: form.address_line1 ? form.address_line1.value.trim() : null,
+        address_line2: form.address_line2 ? form.address_line2.value.trim() : null,
+        city_pincode: form.city_pincode ? form.city_pincode.value.trim() : null,
+        state: form.state ? form.state.value.trim() : null,
+        gstin: form.gstin ? form.gstin.value.trim() : null,
+        state_code: form.state_code ? form.state_code.value.trim() : null,
+        // Role is handled implicitly by the backend
     };
 
     if (!companyId) return alert("Error: User session missing company ID.");
@@ -1566,16 +1567,13 @@ async function handleUserSubmit(e) {
         return;
     }
     
-    // CRITICAL: Ensure we use the global editingUserId variable set by openUserModal.
     const finalEditingId = editingUserId ? parseInt(editingUserId) : null;
     
     try {
         const method = finalEditingId ? "PUT" : "POST";
         const endpoint = finalEditingId ? `${API}/users/${finalEditingId}` : `${API}/users`;
         
-        // --- Added Log for Debugging ---
-        console.log(`[USER SUBMIT] Method: ${method}, Endpoint: ${endpoint}, Data:`, data);
-        // --- End Log ---
+        console.log(`[USER SUBMIT] Method: ${method}, Endpoint: ${endpoint}, ID: ${finalEditingId}, Data:`, data);
 
         const res = await apiFetch(endpoint, {
             method,
@@ -1587,7 +1585,6 @@ async function handleUserSubmit(e) {
         const result = await res.json();
         
         if (!res.ok) {
-            // Display the specific database error text provided by the server
             throw new Error(result.error || `Operation failed: ${res.statusText}`);
         }
         
