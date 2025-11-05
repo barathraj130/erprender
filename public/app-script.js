@@ -4222,21 +4222,20 @@ function updateInvLineItemTotal(row) {
 }
 function updateInvTotals() {
     let subtotal = 0;
-    let lineItemReturnsValue = 0; // Taxable value of returned items (will be a negative number if quantities are negative)
+    let lineItemReturnsValue = 0; 
 
     document.querySelectorAll("#invLineItemsTableBody tr").forEach((row) => {
         const qty = parseFloat(row.querySelector(".inv-line-qty").value) || 0;
         const price = parseFloat(row.querySelector(".inv-line-price").value) || 0;
         const discount = parseFloat(row.querySelector(".inv-line-discount").value) || 0;
 
-        // Taxable value is the base for both sales and returns
         const taxableValue = (qty * price) - discount;
         
+        // Accumulate sales subtotal (positive quantities)
         if (qty >= 0) {
-            // Positive quantity -> Sale. Add to gross subtotal.
             subtotal += taxableValue;
         } else {
-            // Negative quantity -> Return. Add to returns value (which will be a negative number).
+            // Accumulate taxable value of returns (negative quantities yield negative taxable value)
             lineItemReturnsValue += taxableValue; 
         }
         
@@ -4250,8 +4249,16 @@ function updateInvTotals() {
 
     let totalCGST = 0, totalSGST = 0, totalIGST = 0;
     const invoiceType = document.getElementById("inv_invoice_type").value;
+    // Check if the current invoice type requires GST calculation
+    const isTaxable = invoiceType === "TAX_INVOICE" || invoiceType === "SALES_RETURN";
+    
+    const gstSection = document.getElementById("invGstSection");
+    const gstSummarySection = document.getElementById("invGstSummarySection");
 
-    if (invoiceType === "TAX_INVOICE" || invoiceType === "SALES_RETURN") {
+    if (isTaxable) {
+        if (gstSection) gstSection.style.display = "flex";
+        if (gstSummarySection) gstSummarySection.style.display = "table-row";
+        
         const cgstRate = parseFloat(document.getElementById("inv_cgst_rate_overall").value) || 0;
         const sgstRate = parseFloat(document.getElementById("inv_sgst_rate_overall").value) || 0;
         const igstRate = parseFloat(document.getElementById("inv_igst_rate_overall").value) || 0;
@@ -4267,6 +4274,15 @@ function updateInvTotals() {
             totalSGST = taxableSubtotal * (sgstRate / 100);
             totalIGST = 0;
         }
+    } else {
+        // Non-taxable invoice types (Bill of Supply, Party Bill, etc.)
+        if (gstSection) gstSection.style.display = "none";
+        if (gstSummarySection) gstSummarySection.style.display = "none";
+        
+        // Ensure rates are zeroed out if accidentally filled
+        document.getElementById("inv_cgst_rate_overall").value = 0;
+        document.getElementById("inv_sgst_rate_overall").value = 0;
+        document.getElementById("inv_igst_rate_overall").value = 0;
     }
 
     document.getElementById("invTotalCGST").textContent = totalCGST.toFixed(2);
@@ -4274,7 +4290,7 @@ function updateInvTotals() {
     document.getElementById("invTotalIGST").textContent = totalIGST.toFixed(2);
 
     
-    // Total Deductions = Lump-sum discount + Absolute value of returns (since lineItemReturnsValue is negative)
+    // Total Deductions = Lump-sum discount + Absolute value of returns (lineItemReturnsValue is negative)
     const totalDeductions = postBillingDiscount + Math.abs(lineItemReturnsValue); 
     const discountDisplayRow = document.getElementById("invDiscountDisplay");
     const discountAmountDisplay = document.getElementById("invDiscountAmountDisplay");
