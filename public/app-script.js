@@ -2204,6 +2204,10 @@ async function deleteTransaction(id) {
         if (document.getElementById("inventoryManagementSection")?.style.display === 'block') {
              displayProducts(); 
         }
+        // >>> ADDED REFRESH FOR EXPENSES SECTION <<<
+        if (document.getElementById("companySection")?.style.display === 'block') {
+             loadAndDisplayCompanyExpenses();
+        }
         updateDashboardCards(); 
     } catch (error) {
         console.error("Delete transaction error:", error);
@@ -3281,7 +3285,7 @@ async function deleteProduct(productId) {
         if (!res.ok)
             throw new Error(result.error || `Failed to delete product: ${res.statusText}`);
         alert(result.message || "Product deleted");
-        await loadProducts();
+        await loadProducts(); // Correctly reloads products and updates UI
         await loadLenders(null, true);
         if (document.getElementById("supplierManagementSection")?.style.display === 'block') {
             loadSupplierSummaries();
