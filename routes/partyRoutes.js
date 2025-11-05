@@ -142,7 +142,6 @@ router.post('/', async (req, res) => {
 // PUT /api/users/:id - Update User (Party) and associated Ledger
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
-    // We parse ID as integer here since it comes from req.params
     const userId = parseInt(id); 
     const companyId = req.user.active_company_id;
     const { username, email, phone, company, initial_balance, 
@@ -170,6 +169,8 @@ router.put('/:id', async (req, res) => {
             if (duplicateUserCheck.length > 0) {
                 return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
             }
+            
+            // 2. We rely on the DB constraint (23505) for the local ledger conflict.
         }
         
         // FIX: Ensure the role is never set to NULL, using the existing role as fallback
@@ -215,12 +216,13 @@ router.put('/:id', async (req, res) => {
         
         // Catch PostgreSQL unique constraint violation
         if (err.code === '23505') { 
+            // Ensure 400 status is returned for user conflicts
             errorMsg = "A user or ledger with that name already exists in your company.";
+             return res.status(400).json({ error: "Failed to update user: " + errorMsg, details: err.message });
         }
         
         console.error("PG PUT User/Party Error:", errorMsg, err.stack);
-        // Ensure the error response uses 400 for conflicts, not 500
-        return res.status(400).json({ error: "Failed to update user: " + errorMsg, details: err.message });
+        return res.status(500).json({ error: 'Failed to update user records.', details: err.message });
     } finally {
         if (client) client.release();
     }
