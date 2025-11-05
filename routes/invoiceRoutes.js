@@ -41,25 +41,33 @@ async function generateNotificationForLowStock(client, productId, companyId) {
 }
 
 async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, companyId, invoiceData, processedLineItems) {
-    const { customer_id, invoice_number, total_amount, paid_amount, invoice_type, invoice_date, newPaymentMethod } = invoiceData;
+    const { customer_id, invoice_number, total_amount, amount_before_tax, paid_amount, invoice_type, invoice_date, newPaymentMethod, total_cgst_amount, total_sgst_amount, total_igst_amount, party_bill_returns_amount } = invoiceData;
     
     // Ensure customer_id is strictly an integer for insertion params
     const finalCustomerId = parseInt(customer_id);
+    const finalPartyReturnsAmount = parseFloat(party_bill_returns_amount) || 0; 
+    
+    // Calculate the gross total before any final adjustments for the base sale entry
+    const totalSaleAmountGross = parseFloat(amount_before_tax) + parseFloat(total_cgst_amount) + parseFloat(total_sgst_amount) + parseFloat(total_igst_amount);
 
     // 1. Create the main Sale/Credit Note transaction (Affects Receivable)
-    if (parseFloat(total_amount) !== 0) {
+    if (totalSaleAmountGross !== 0) {
         const isReturn = invoice_type === 'SALES_RETURN';
         const saleCategoryName = isReturn ? "Product Return from Customer (Credit Note)" : "Sale to Customer (On Credit)";
-        const saleTxActualAmount = parseFloat(total_amount); 
+        
+        // Amount stored here is the full amount owed/credited (line items total, pre-tax + tax)
+        const saleTxActualAmount = totalSaleAmountGross; 
         
         // Explicitly include NULL for lender_id/agreement_id in Sale transaction
         const saleTransactionSql = `INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) 
                                     VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7) RETURNING id`;
-        const saleTransactionParams = [companyId, finalCustomerId, saleTxActualAmount, isReturn ? `Credit Note for ${invoice_number}` : `Invoice ${invoice_number}`, saleCategoryName, invoice_date, invoiceId];
+        
+        const saleTransactionParams = [companyId, finalCustomerId, saleTxActualAmount, isReturn ? `Credit Note for ${invoice_number} (Gross)` : `Invoice ${invoice_number} (Gross)`, saleCategoryName, invoice_date, invoiceId];
         
         const saleTxResult = await client.query(saleTransactionSql, saleTransactionParams);
         const saleTransactionId = saleTxResult.rows[0].id;
         
+        // Stock and Line Item insertions
         for (const item of processedLineItems) {
             if (!item.product_id) continue;
             
@@ -75,6 +83,19 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
             
             await generateNotificationForLowStock(client, item.product_id, companyId);
         }
+        
+        // --- NEW: POST-BILLING DISCOUNT/ADJUSTMENT TRANSACTION ---
+        if (finalPartyReturnsAmount > 0) {
+            const adjustmentAmount = -Math.abs(finalPartyReturnsAmount); // Negative amount to reduce AR
+            const adjustmentCategory = (invoice_type === 'PARTY_BILL') ? "Post-Billing Discount Allowed" : "Invoice Adjustment/Discount";
+            
+            const adjustmentTxSql = `INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id)
+                                    VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7)`;
+            const adjustmentTxParams = [companyId, finalCustomerId, adjustmentAmount, `Post-billing discount/adjustment for Invoice ${invoice_number}`, adjustmentCategory, invoice_date, invoiceId];
+            
+            await client.query(adjustmentTxSql, adjustmentTxParams);
+            console.log(`DEBUG: Inserted Post-Billing Adjustment of ${adjustmentAmount} for Invoice ${invoice_number}`);
+        }
     }
 
     // 2. Create the payment/refund transaction (Affects Cash/Bank and Receivable)
@@ -82,7 +103,6 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
     if (currentPaymentMade !== 0 && newPaymentMethod) {
         
         let paymentCategoryName;
-        // Payment Received: amount > 0, Refund: amount < 0
         
         if (newPaymentMethod.toLowerCase() === 'cash') {
             paymentCategoryName = currentPaymentMade > 0 ? "Payment Received from Customer (Cash)" : "Product Return from Customer (Refund via Cash)";
@@ -90,19 +110,14 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
             paymentCategoryName = currentPaymentMade > 0 ? "Payment Received from Customer (Bank)" : "Product Return from Customer (Refund via Bank)";
         }
         
-        let paymentTxActualAmount = currentPaymentMade; // Amount entered by user (e.g., 2000)
+        let paymentTxActualAmount = currentPaymentMade; 
 
-        // --- START FIX: Correct Transaction Amount Sign for Receivable Ledger ---
         // If it's a Payment Received (positive paid_amount from FE input)
         if (currentPaymentMade > 0 && paymentCategoryName.startsWith('Payment Received')) {
             // It reduces the customer's debt (Credit to Receivable Ledger), so store as negative.
             paymentTxActualAmount = -Math.abs(currentPaymentMade);
         }
-        // Refunds (which are negative currentPaymentMade) are already negative, so we leave them.
-        // --- END FIX ---
-
         
-        // FIX: Explicitly specify NULL for lender_id and agreement_id
         const paymentTransactionSql = `INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) 
                                        VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7)`;
         const paymentTransactionParams = [
@@ -115,15 +130,11 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
             invoiceId
         ];
         
-        // --- DEBUG LOGGING ---
-        console.log("DEBUG: Attempting to insert Payment Transaction:", paymentTransactionParams);
-        // --- END DEBUG LOGGING ---
-        
         await client.query(paymentTransactionSql, paymentTransactionParams);
         console.log("DEBUG: Payment Transaction successfully inserted.");
     }
 }
-// -------------------------------------------------------------------------------
+// ------------------------------------------------------------------------
 
 
 // GET all invoices
@@ -183,7 +194,8 @@ router.post('/', async (req, res) => {
     let {
         invoice_number, customer_id, invoice_date, due_date, status, notes,
         invoice_type, line_items, cgst_rate = 0, sgst_rate = 0, igst_rate = 0,
-        party_bill_returns_amount = 0, reverse_charge, transportation_mode, vehicle_number,
+        party_bill_returns_amount = 0, // This is now used for the lump-sum discount
+        reverse_charge, transportation_mode, vehicle_number,
         date_of_supply, place_of_supply_state, place_of_supply_state_code, bundles_count,
         consignee_name, consignee_address_line1, consignee_address_line2,
         consignee_city_pincode, consignee_state, consignee_gstin, consignee_state_code,
@@ -255,7 +267,12 @@ router.post('/', async (req, res) => {
             };
         });
         
-        const final_total_amount = amount_before_tax + total_cgst_amount + total_sgst_amount + total_igst_amount - (parseFloat(party_bill_returns_amount) || 0);
+        // Calculate the gross total (line items sum including tax)
+        const total_line_item_amount = amount_before_tax + total_cgst_amount + total_sgst_amount + total_igst_amount;
+        
+        // Apply the post-billing adjustment to get the final amount on the invoice header
+        const final_post_billing_adjustment = parseFloat(party_bill_returns_amount) || 0;
+        const final_total_amount = total_line_item_amount - final_post_billing_adjustment;
 
         
         client = await pool.connect();
@@ -267,7 +284,7 @@ router.post('/', async (req, res) => {
         const invoiceHeaderParams = [
             companyId, customer_id, invoice_number, invoice_date, due_date, final_total_amount, 
             amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, 
-            parseFloat(party_bill_returns_amount) || 0, status, invoice_type, notes, initialPaymentAmount, 
+            final_post_billing_adjustment, status, invoice_type, notes, initialPaymentAmount, 
             reverse_charge, transportation_mode, vehicle_number, date_of_supply, place_of_supply_state, 
             place_of_supply_state_code, bundles_count, consignee_name, consignee_address_line1, 
             consignee_address_line2, consignee_city_pincode, consignee_state, consignee_gstin, 
@@ -290,7 +307,14 @@ router.post('/', async (req, res) => {
         }
         
         // Create associated transactions and stock updates using the transactional client
-        await createAssociatedTransactionsAndStockUpdate(client, invoiceId, companyId, { customer_id, invoice_number, total_amount: final_total_amount, paid_amount: initialPaymentAmount, invoice_type, invoice_date, newPaymentMethod: payment_method_for_new_payment }, processed_line_items);
+        const invoiceFullDataForTxHelper = { 
+            customer_id, invoice_number, total_amount: final_total_amount, 
+            amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, // Pass gross tax details
+            paid_amount: initialPaymentAmount, invoice_type, invoice_date, 
+            newPaymentMethod: payment_method_for_new_payment,
+            party_bill_returns_amount: final_post_billing_adjustment // Pass the adjustment amount
+        };
+        await createAssociatedTransactionsAndStockUpdate(client, invoiceId, companyId, invoiceFullDataForTxHelper, processed_line_items);
 
         await client.query("COMMIT");
         res.status(201).json({ id: invoiceId, invoice_number, message: "Invoice created successfully." });
@@ -337,7 +361,8 @@ router.put('/:id', async (req, res) => {
         let {
             invoice_number, customer_id, invoice_date, due_date, status, notes,
             invoice_type, line_items, cgst_rate = 0, sgst_rate = 0, igst_rate = 0,
-            party_bill_returns_amount = 0, reverse_charge, transportation_mode, vehicle_number,
+            party_bill_returns_amount = 0, // Used for lump-sum discount
+            reverse_charge, transportation_mode, vehicle_number,
             date_of_supply, place_of_supply_state, place_of_supply_state_code, bundles_count,
             consignee_name, consignee_address_line1, consignee_address_line2,
             consignee_city_pincode, consignee_state, consignee_gstin, consignee_state_code,
@@ -383,13 +408,19 @@ router.put('/:id', async (req, res) => {
                 line_total: taxable_value + item_cgst + item_sgst + item_igst 
             };
         });
-        const final_total_amount = amount_before_tax + total_cgst_amount + total_sgst_amount + total_igst_amount - (parseFloat(party_bill_returns_amount) || 0);
+        
+        // Calculate the gross total (line items sum including tax)
+        const total_line_item_amount = amount_before_tax + total_cgst_amount + total_sgst_amount + total_igst_amount;
+        
+        // Apply the post-billing adjustment to get the final amount on the invoice header
+        const final_post_billing_adjustment = parseFloat(party_bill_returns_amount) || 0;
+        const final_total_amount = total_line_item_amount - final_post_billing_adjustment;
 
         // --- 3. Update the invoice header ---
         
         const updateInvoiceSql = `UPDATE invoices SET customer_id = $1, invoice_number = $2, invoice_date = $3, due_date = $4, total_amount = $5, amount_before_tax = $6, total_cgst_amount = $7, total_sgst_amount = $8, total_igst_amount = $9, party_bill_returns_amount = $10, status = $11, invoice_type = $12, notes = $13, paid_amount = paid_amount + $14, reverse_charge = $15, transportation_mode = $16, vehicle_number = $17, date_of_supply = $18, place_of_supply_state = $19, place_of_supply_state_code = $20, bundles_count = $21, consignee_name = $22, consignee_address_line1 = $23, consignee_address_line2 = $24, consignee_city_pincode = $25, consignee_state = $26, consignee_gstin = $27, consignee_state_code = $28, amount_in_words = $29, original_invoice_number = $30, updated_at = NOW() WHERE id = $31 AND company_id = $32 RETURNING id`;
         
-        const updateParams = [customer_id, invoice_number, invoice_date, due_date, final_total_amount, amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, party_bill_returns_amount, status, invoice_type, notes, initialPaymentAmount, reverse_charge, transportation_mode, vehicle_number, date_of_supply, place_of_supply_state, place_of_supply_state_code, bundles_count, consignee_name, consignee_address_line1, consignee_address_line2, consignee_city_pincode, consignee_state, consignee_gstin, consignee_state_code, amount_in_words, original_invoice_number, id, companyId];
+        const updateParams = [customer_id, invoice_number, invoice_date, due_date, final_total_amount, amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, final_post_billing_adjustment, status, invoice_type, notes, initialPaymentAmount, reverse_charge, transportation_mode, vehicle_number, date_of_supply, place_of_supply_state, place_of_supply_state_code, bundles_count, consignee_name, consignee_address_line1, consignee_address_line2, consignee_city_pincode, consignee_state, consignee_gstin, consignee_state_code, amount_in_words, original_invoice_number, id, companyId];
         
         await client.query(updateInvoiceSql, updateParams);
 
@@ -402,7 +433,13 @@ router.put('/:id', async (req, res) => {
         }
         
         // --- 5. Re-create new associated transactions and stock updates ---
-        const invoiceFullDataForTxHelper = { customer_id, invoice_number, total_amount: final_total_amount, paid_amount: initialPaymentAmount, invoice_type, invoice_date, newPaymentMethod: payment_method_for_new_payment };
+        const invoiceFullDataForTxHelper = { 
+            customer_id, invoice_number, total_amount: final_total_amount, 
+            amount_before_tax, total_cgst_amount, total_sgst_amount, total_igst_amount, // Pass gross tax details
+            paid_amount: initialPaymentAmount, invoice_type, invoice_date, 
+            newPaymentMethod: payment_method_for_new_payment, 
+            party_bill_returns_amount: final_post_billing_adjustment
+        };
         await createAssociatedTransactionsAndStockUpdate(client, id, companyId, invoiceFullDataForTxHelper, processed_line_items);
 
         await client.query("COMMIT");

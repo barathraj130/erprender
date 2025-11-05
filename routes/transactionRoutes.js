@@ -1,4 +1,3 @@
-// routes/transactionRoutes.js
 const express = require('express');
 const router = express.Router();
 // --- PG FIX: Import pool for helper function ---
@@ -77,7 +76,7 @@ router.post('/', async (req, res) => {
     
     console.log("<<<<< DEBUG: Transaction header created. ID:", transactionId, "for category:", category, "Amount:", amount, ">>>>>");
     
-    // --- Invoice Payment Update ---
+    // --- Invoice Payment Update (Only for explicit payments, not discounts/adjustments) ---
     if (parsedRelatedInvoiceId && category.toLowerCase().includes('payment received')) {
         // Since payment received for a user is stored as a negative amount in this route, 
         // we must use the absolute value to update the invoice's paid_amount.

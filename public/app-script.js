@@ -69,7 +69,6 @@ const transactionCategories = [
     { name: "Product Return from Customer (Credit Note)", type: "receivable_decrease", group: "customer_return", isProductSale: true, affectsLedger: "none", relevantTo: "customer" },
     { name: "Product Return from Customer (Refund via Cash)", type: "cash_expense", group: "customer_return", isProductSale: true, affectsLedger: "cash", relevantTo: "customer" },
     { name: "Product Return from Customer (Refund via Bank)", type: "bank_expense", group: "customer_return", isProductSale: true, affectsLedger: "bank", relevantTo: "customer" },
-
     // --- Supplier Transactions ---
     // Purchases from Suppliers
     { name: "Purchase from Supplier (On Credit)", type: "payable_increase", group: "supplier_expense", isProductPurchase: true, affectsLedger: "none", relevantTo: "lender" },
@@ -100,7 +99,8 @@ const transactionCategories = [
     { name: "Business Pays Chit Installment (Bank)", type: "bank_expense", group: "biz_chit_out", affectsLedger: "bank", relevantTo: "lender" },
     { name: "Business Receives Chit Payout (to Cash)", type: "cash_income", group: "biz_chit_in", affectsLedger: "cash", relevantTo: "lender" },
     { name: "Business Receives Chit Payout (to Bank)", type: "bank_income", group: "biz_chit_in", affectsLedger: "bank", relevantTo: "lender" },
-
+    { name: "Post-Billing Discount Allowed", type: "receivable_decrease", group: "customer_adjustment", affectsLedger: "none", relevantTo: "customer" }, // NEW
+    { name: "Invoice Adjustment/Discount", type: "receivable_decrease", group: "customer_adjustment", affectsLedger: "none", relevantTo: "customer" },
     // --- Internal & Operational Transactions ---
     // Bank & Cash Contra
     { name: "Cash Deposited to Bank", type: "neutral_cash_movement", group: "bank_ops", affectsLedger: "both_cash_out_bank_in", relevantTo: "none" },
@@ -3627,22 +3627,24 @@ function toggleGstFields() {
 
     updateInvTotals();
 }
-
 function togglePartyBillReturnsField() {
-    const invoiceType = document.getElementById("inv_invoice_type").value;
-    const partyBillReturnsSection = document.getElementById(
-        "invPartyBillReturnsSection",
-    );
-    const returnsDisplayRow = document.getElementById("invReturnsDisplay");
+    // The input for party_bill_returns_amount is now always visible in the modal (see dashboard.html change).
+    // This function ensures the totals reflect the adjustment correctly.
+    
+    // Get the display elements, as we will manipulate the calculated totals immediately.
+    const discountDisplayRow = document.getElementById("invDiscountDisplay");
+    const adjustmentInput = document.getElementById("inv_party_bill_returns_amount");
 
-    if (invoiceType === "PARTY_BILL") {
-        if(partyBillReturnsSection) partyBillReturnsSection.style.display = "block";
-        if(returnsDisplayRow) returnsDisplayRow.style.display = "block"; // This was table-row, might be fine as block
-    } else {
-        if(partyBillReturnsSection) partyBillReturnsSection.style.display = "none";
-        if(returnsDisplayRow) returnsDisplayRow.style.display = "none";
-        document.getElementById("inv_party_bill_returns_amount").value = 0;
+    // Clear any residual styles/values that might interfere with recalculation
+    if (adjustmentInput) {
+        adjustmentInput.placeholder = "Lump-sum discount amount";
     }
+
+    if (discountDisplayRow) {
+        // The display row's visibility is now determined entirely within updateInvTotals()
+        discountDisplayRow.style.display = "none";
+    }
+    
     updateInvTotals();
 }
 async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
@@ -4220,59 +4222,49 @@ function updateInvLineItemTotal(row) {
 }
 function updateInvTotals() {
     let subtotal = 0;
-    let lineItemReturnsTotal = 0;
+    let lineItemReturnsValue = 0; // Taxable value of returned items (will be a negative number if quantities are negative)
 
     document.querySelectorAll("#invLineItemsTableBody tr").forEach((row) => {
         const qty = parseFloat(row.querySelector(".inv-line-qty").value) || 0;
         const price = parseFloat(row.querySelector(".inv-line-price").value) || 0;
         const discount = parseFloat(row.querySelector(".inv-line-discount").value) || 0;
+
+        // Taxable value is the base for both sales and returns
         const taxableValue = (qty * price) - discount;
         
-        // This part is correct
         if (qty >= 0) {
+            // Positive quantity -> Sale. Add to gross subtotal.
             subtotal += taxableValue;
         } else {
-            lineItemReturnsTotal += taxableValue;
+            // Negative quantity -> Return. Add to returns value (which will be a negative number).
+            lineItemReturnsValue += taxableValue; 
         }
+        
+        row.querySelector(".inv-line-item-taxable-amount").textContent = taxableValue.toFixed(2);
     });
+    
+    // --- 1. Get the lump-sum post-billing discount value ---
+    const postBillingDiscount = Math.abs(parseFloat(document.getElementById("inv_party_bill_returns_amount").value) || 0);
+
     document.getElementById("invSubtotal").textContent = subtotal.toFixed(2);
 
-    const returnsDisplayRow = document.getElementById("invReturnsDisplay");
-    const returnsAmountDisplay = document.getElementById("invReturnsAmountDisplay");
-    
-    let totalReturnsAmount = Math.abs(lineItemReturnsTotal);
-
-    const invoiceType = document.getElementById("inv_invoice_type").value;
-    if (invoiceType === "PARTY_BILL") {
-        const partyBillReturnAmount = Math.abs(parseFloat(document.getElementById("inv_party_bill_returns_amount").value) || 0);
-        totalReturnsAmount += partyBillReturnAmount;
-    }
-    
-    if (totalReturnsAmount > 0) {
-        returnsAmountDisplay.textContent = totalReturnsAmount.toFixed(2);
-        returnsDisplayRow.style.display = "table-row";
-    } else {
-        returnsDisplayRow.style.display = "none";
-    }
-
     let totalCGST = 0, totalSGST = 0, totalIGST = 0;
+    const invoiceType = document.getElementById("inv_invoice_type").value;
 
     if (invoiceType === "TAX_INVOICE" || invoiceType === "SALES_RETURN") {
         const cgstRate = parseFloat(document.getElementById("inv_cgst_rate_overall").value) || 0;
         const sgstRate = parseFloat(document.getElementById("inv_sgst_rate_overall").value) || 0;
         const igstRate = parseFloat(document.getElementById("inv_igst_rate_overall").value) || 0;
         
-        const taxableSubtotal = subtotal;
+        // Taxable subtotal for GST calculation (based on positive quantity items only)
+        const taxableSubtotal = subtotal; 
 
         if (igstRate > 0) { 
             totalIGST = taxableSubtotal * (igstRate / 100);
-            document.getElementById("inv_cgst_rate_overall").value = 0; 
-            document.getElementById("inv_sgst_rate_overall").value = 0;
             totalCGST = 0; totalSGST = 0;
         } else { 
             totalCGST = taxableSubtotal * (cgstRate / 100);
             totalSGST = taxableSubtotal * (sgstRate / 100);
-            document.getElementById("inv_igst_rate_overall").value = 0; 
             totalIGST = 0;
         }
     }
@@ -4281,11 +4273,26 @@ function updateInvTotals() {
     document.getElementById("invTotalSGST").textContent = totalSGST.toFixed(2);
     document.getElementById("invTotalIGST").textContent = totalIGST.toFixed(2);
 
-    // --- START OF FIX ---
-    // The grand total calculation was not including the tax amounts.
-    let grandTotal = subtotal + totalCGST + totalSGST + totalIGST + lineItemReturnsTotal;
-    // --- END OF FIX ---
+    
+    // Total Deductions = Lump-sum discount + Absolute value of returns (since lineItemReturnsValue is negative)
+    const totalDeductions = postBillingDiscount + Math.abs(lineItemReturnsValue); 
+    const discountDisplayRow = document.getElementById("invDiscountDisplay");
+    const discountAmountDisplay = document.getElementById("invDiscountAmountDisplay");
 
+    if (totalDeductions > 0.01) {
+        discountAmountDisplay.textContent = totalDeductions.toFixed(2);
+        if(discountDisplayRow) discountDisplayRow.style.display = "table-row";
+    } else {
+        if(discountDisplayRow) discountDisplayRow.style.display = "none";
+    }
+
+    // Grand Total Calculation:
+    // 1. Start with Gross Sales (Subtotal + Taxes)
+    let grandTotal = subtotal + totalCGST + totalSGST + totalIGST;
+
+    // 2. Subtract all deductions (Lump sum discount + returns value)
+    grandTotal -= totalDeductions;
+    
     document.getElementById("invGrandTotal").textContent = grandTotal.toFixed(2);
 
     const amountInWordsInput = document.getElementById("inv_amount_in_words");
