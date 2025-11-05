@@ -175,19 +175,14 @@ async function openUserModal(user = null) {
     const form = document.getElementById("userForm");
     const modalTitle = document.getElementById("userModalTitle");
 
-    if (!modal || !form || !modalTitle) {
-        console.error("User modal, form, or title element not found in DOM!");
-        alert("Error: Cannot open the customer details form.");
-        return;
-    }
+    // ... (DOM check and reset) ...
 
     form.reset();
     editingUserId = null; 
     modalTitle.textContent = "Add New Customer"; 
 
     if (user) {
-        // CRITICAL: Ensure we store the ID as a clean integer or string ID.
-        // Since database IDs are typically integers, we ensure proper storage.
+        // Ensure the ID stored globally is the one from the user object
         editingUserId = user.id; 
         modalTitle.textContent = `Edit Customer: ${user.username}`;
         
@@ -196,7 +191,6 @@ async function openUserModal(user = null) {
         document.getElementById("email").value = user.email || "";
         document.getElementById("phone").value = user.phone || "";
         document.getElementById("company").value = user.company || "";
-        // Ensure balance is correctly formatted string or number
         document.getElementById("balance").value = user.initial_balance !== undefined ? parseFloat(user.initial_balance).toFixed(2) : "0.00"; 
         document.getElementById("address_line1").value = user.address_line1 || "";
         document.getElementById("address_line2").value = user.address_line2 || "";
@@ -204,12 +198,10 @@ async function openUserModal(user = null) {
         document.getElementById("state").value = user.state || "";
         document.getElementById("gstin").value = user.gstin || "";
         document.getElementById("state_code").value = user.state_code || "";
-        // Note: The 'role' field is intentionally not exposed in the modal.
     }
     
     modal.classList.add('show');
 }
-
 // In app-script.js
 
 function closeUserModal() {
@@ -1566,7 +1558,6 @@ async function handleUserSubmit(e) {
         state: state.value.trim(),
         gstin: gstin.value.trim(),
         state_code: state_code.value.trim(),
-        // NOTE: Role is omitted here, relying on the backend default/preservation logic.
     };
 
     if (!companyId) return alert("Error: User session missing company ID.");
@@ -1575,13 +1566,17 @@ async function handleUserSubmit(e) {
         return;
     }
     
-    // Ensure editing ID is treated as a number for the URL
+    // CRITICAL: Ensure we use the global editingUserId variable set by openUserModal.
     const finalEditingId = editingUserId ? parseInt(editingUserId) : null;
     
     try {
         const method = finalEditingId ? "PUT" : "POST";
         const endpoint = finalEditingId ? `${API}/users/${finalEditingId}` : `${API}/users`;
         
+        // --- Added Log for Debugging ---
+        console.log(`[USER SUBMIT] Method: ${method}, Endpoint: ${endpoint}, Data:`, data);
+        // --- End Log ---
+
         const res = await apiFetch(endpoint, {
             method,
             headers: { "Content-Type": "application/json" },
@@ -1590,8 +1585,11 @@ async function handleUserSubmit(e) {
 
         if(!res) return;
         const result = await res.json();
-        if (!res.ok)
+        
+        if (!res.ok) {
+            // Display the specific database error text provided by the server
             throw new Error(result.error || `Operation failed: ${res.statusText}`);
+        }
         
         alert(result.message || (finalEditingId ? "Customer updated" : "Customer added"));
         
@@ -1603,12 +1601,9 @@ async function handleUserSubmit(e) {
         }
     } catch (error) {
         console.error("Error submitting customer form:", error);
-        // Display the specific database error text
         alert("Operation failed: " + error.message);
     }
 }
-
-
 function formatLedgerDate(dateString) {
     if (!dateString) return "N/A";
     const date = new Date(dateString.split('T')[0] + 'T00:00:00'); 

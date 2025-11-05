@@ -142,18 +142,21 @@ router.post('/', async (req, res) => {
 // PUT /api/users/:id - Update User (Party) and associated Ledger
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
+    // We parse ID as integer here since it comes from req.params
+    const userId = parseInt(id); 
     const companyId = req.user.active_company_id;
     const { username, email, phone, company, initial_balance, 
             address_line1, address_line2, city_pincode, state, gstin, state_code } = req.body;
     
-    // Explicitly handle role if sent, but default to preservation.
     let { role } = req.body; 
 
     if (!username) return res.status(400).json({ error: "Username is required." });
     
+    if (isNaN(userId)) return res.status(400).json({ error: "Invalid User ID provided in URL." });
+
     let client;
     try {
-        const oldUserRows = await dbQuery("SELECT username, role FROM users WHERE id = $1", [id]);
+        const oldUserRows = await dbQuery("SELECT username, role FROM users WHERE id = $1", [userId]);
         const oldUser = oldUserRows[0];
 
         if (!oldUser) return res.status(404).json({error: "User not found."});
@@ -162,13 +165,11 @@ router.put('/:id', async (req, res) => {
         // --- PRE-VALIDATION: Check for conflicts only if the username is changing ---
         if (oldUsername !== username) {
             // 1. Check for global user conflict (users.username UNIQUE)
-            const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1 AND id != $2", [username, id]);
+            // We ensure no OTHER user uses the new username.
+            const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1 AND id != $2", [username, userId]);
             if (duplicateUserCheck.length > 0) {
                 return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
             }
-            
-            // 2. We skip explicit local ledger check here and rely on the DB constraint (23505) 
-            // for the ledger update in step 2, to avoid complex nested queries.
         }
         
         // FIX: Ensure the role is never set to NULL, using the existing role as fallback
@@ -184,7 +185,7 @@ router.put('/:id', async (req, res) => {
             WHERE id = $13`;
         const userParams = [
             username, email, phone, company, initial_balance, finalRole, 
-            address_line1, address_line2, city_pincode, state, gstin, state_code, id
+            address_line1, address_line2, city_pincode, state, gstin, state_code, userId
         ];
         const userResult = await client.query(userUpdateSql, userParams);
         
@@ -218,7 +219,8 @@ router.put('/:id', async (req, res) => {
         }
         
         console.error("PG PUT User/Party Error:", errorMsg, err.stack);
-        return res.status(500).json({ error: "Failed to update user: " + errorMsg, details: err.message });
+        // Ensure the error response uses 400 for conflicts, not 500
+        return res.status(400).json({ error: "Failed to update user: " + errorMsg, details: err.message });
     } finally {
         if (client) client.release();
     }
