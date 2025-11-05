@@ -1,4 +1,4 @@
-// routes/partyRoutes.js
+// routes/partyRoutes.js (FINAL ROBUST VERSION)
 const express = require('express');
 const router = express.Router();
 // --- PG FIX: Import pool ---
@@ -153,17 +153,30 @@ router.put('/:id', async (req, res) => {
     
     let client;
     try {
-        // --- PRE-VALIDATION: Check if the new username is already used by another user globally ---
-        const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1 AND id != $2", [username, id]);
-        if (duplicateUserCheck.length > 0) {
-            return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
-        }
-        
         const oldUserRows = await dbQuery("SELECT username, role FROM users WHERE id = $1", [id]);
         const oldUser = oldUserRows[0];
 
         if (!oldUser) return res.status(404).json({error: "User not found."});
         const oldUsername = oldUser.username;
+        
+        // --- PRE-VALIDATION: Check for conflicts only if the username is changing ---
+        if (oldUsername !== username) {
+            // 1. Check for global user conflict (users.username UNIQUE)
+            const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1", [username]);
+            if (duplicateUserCheck.length > 0) {
+                // If the duplicate ID is NOT the current ID, it's a conflict.
+                if (duplicateUserCheck[0].id != id) {
+                    return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
+                }
+            }
+            
+            // 2. Check for local ledger conflict (ledgers.company_id, name UNIQUE)
+            const duplicateLedgerCheck = await dbQuery("SELECT l.id FROM ledgers l JOIN users u ON l.name = u.username AND l.company_id = $2 WHERE l.name = $1 AND u.id != $3", [username, companyId, id]);
+            
+            if (duplicateLedgerCheck.length > 0) {
+                 return res.status(400).json({ error: "A ledger with that name already exists in your company. Please choose another name." });
+            }
+        }
         
         // FIX: Ensure the role is never set to NULL, using the existing role as fallback
         const finalRole = role || oldUser.role || 'user';
@@ -241,7 +254,7 @@ router.delete('/:id', async (req, res) => {
         // 1. Check for constraints that ARE NOT ON DELETE SET NULL/CASCADE
         
         // Check if user is referenced in invoices (FK is ON DELETE RESTRICT by default if not specified)
-        const invoiceCountRows = await client.query('SELECT COUNT(*) as count FROM invoices WHERE customer_id = $1', [id]);
+        const invoiceCountRows = await dbQuery('SELECT COUNT(*) as count FROM invoices WHERE customer_id = $1', [id]);
         if (parseInt(invoiceCountRows.rows[0].count) > 0) {
              await client.query("ROLLBACK");
              return res.status(400).json({ error: 'Cannot delete party. They are linked to existing invoices. Delete invoices first.' });
