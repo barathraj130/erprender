@@ -146,13 +146,19 @@ router.put('/:id', async (req, res) => {
     const { username, email, phone, company, initial_balance, 
             address_line1, address_line2, city_pincode, state, gstin, state_code } = req.body;
     
-    // Explicitly check for role if sent, but default to preservation.
+    // Explicitly handle role if sent, but default to preservation.
     let { role } = req.body; 
 
     if (!username) return res.status(400).json({ error: "Username is required." });
     
     let client;
     try {
+        // --- PRE-VALIDATION: Check if the new username is already used by another user globally ---
+        const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1 AND id != $2", [username, id]);
+        if (duplicateUserCheck.length > 0) {
+            return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
+        }
+        
         const oldUserRows = await dbQuery("SELECT username, role FROM users WHERE id = $1", [id]);
         const oldUser = oldUserRows[0];
 
@@ -171,7 +177,7 @@ router.put('/:id', async (req, res) => {
             address_line1 = $7, address_line2 = $8, city_pincode = $9, state = $10, gstin = $11, state_code = $12
             WHERE id = $13`;
         const userParams = [
-            username, email, phone, company, initial_balance, finalRole,
+            username, email, phone, company, initial_balance, finalRole, // <-- FIXED role usage
             address_line1, address_line2, city_pincode, state, gstin, state_code, id
         ];
         const userResult = await client.query(userUpdateSql, userParams);
@@ -199,7 +205,10 @@ router.put('/:id', async (req, res) => {
     } catch (err) {
         if (client) await client.query("ROLLBACK");
         let errorMsg = err.message;
-        if (err.code === '23505') errorMsg = "A user or ledger with that name already exists in your company.";
+        
+        if (err.code === '23505') { 
+            errorMsg = "A user or ledger with that name already exists in your company.";
+        }
         
         console.error("PG PUT User/Party Error:", errorMsg, err.stack);
         return res.status(500).json({ error: "Failed to update user: " + errorMsg, details: err.message });
