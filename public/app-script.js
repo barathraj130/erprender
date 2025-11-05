@@ -2926,11 +2926,8 @@ async function loadUserTransactionHistory(
             return;
         }
 
-        // FIX 2: Only include actual transactions related to this user (user_id is set)
+        // Only include actual transactions related to this user (user_id is set)
         let allEntries = [...allTransactionsCache.filter(tx => tx.user_id === userId)];
-        
-        // FIX 2: We must check if the transaction is a sale/return transaction 
-        // that was created along with an invoice, OR a standalone payment transaction.
         
         const filteredEntries = categoryGroupFilter === 'all'
             ? allEntries
@@ -2946,7 +2943,7 @@ async function loadUserTransactionHistory(
                 return categoryInfo.group === categoryGroupFilter;
             });
         
-        // Sort by date ascending
+        // Sort by date ascending, then by ID ascending
         filteredEntries.sort((a, b) => new Date(a.date) - new Date(b.date) || (a.id||0) - (b.id||0));
         
         tableBody.innerHTML = "";
@@ -2956,11 +2953,21 @@ async function loadUserTransactionHistory(
         // 1. Starting Point: Initial Balance from User Profile
         let runningBalance = parseFloat(customer.initial_balance || 0);
         
-        // 2. Add/Deduct all transactions *before* the first displayed entry (for opening balance calculation)
+        // 2. Adjust historical balances before the first displayed date (crucial for retroactive correction)
         allTransactionsCache
             .filter(tx => tx.user_id === userId && tx.date < firstTransactionDate)
             .forEach(tx => { 
-                runningBalance += parseFloat(tx.amount || 0); 
+                let amount = parseFloat(tx.amount || 0);
+
+                // *** RETROACTIVE SIGN CORRECTION LOGIC for Payments Received ***
+                const catInfo = transactionCategories.find(c => c.name === tx.category);
+                if (catInfo && catInfo.group === 'customer_payment' && amount > 0) {
+                    // Payment Received was wrongly stored as positive; treat as negative (Credit)
+                    amount = -amount;
+                }
+                // *** END CORRECTION ***
+
+                runningBalance += amount; 
             });
 
         
@@ -2986,8 +2993,16 @@ async function loadUserTransactionHistory(
                 const row = tableBody.insertRow();
                 let debit = "";
                 let credit = "";
-                const amount = parseFloat(tx.amount || 0);
+                let amount = parseFloat(tx.amount || 0); // Stored amount
 
+                // *** APPLY CORRECTION FOR DISPLAYED ENTRIES ***
+                const catInfo = transactionCategories.find(c => c.name === tx.category);
+                if (catInfo && catInfo.group === 'customer_payment' && amount > 0) {
+                    // Payment Received was wrongly stored as positive; treat as negative (Credit)
+                    amount = -amount;
+                }
+                // *** END CORRECTION ***
+                
                 if (amount > 0) {
                     debit = amount.toFixed(2);
                     totalDebits += amount;
