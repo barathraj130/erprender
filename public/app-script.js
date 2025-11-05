@@ -186,20 +186,25 @@ async function openUserModal(user = null) {
     modalTitle.textContent = "Add New Customer"; 
 
     if (user) {
-        editingUserId = user.id;
+        // CRITICAL: Ensure we store the ID as a clean integer or string ID.
+        // Since database IDs are typically integers, we ensure proper storage.
+        editingUserId = user.id; 
         modalTitle.textContent = `Edit Customer: ${user.username}`;
         
+        // Populate fields
         document.getElementById("username").value = user.username || "";
         document.getElementById("email").value = user.email || "";
         document.getElementById("phone").value = user.phone || "";
         document.getElementById("company").value = user.company || "";
-        document.getElementById("balance").value = user.initial_balance !== undefined ? user.initial_balance : 0;
+        // Ensure balance is correctly formatted string or number
+        document.getElementById("balance").value = user.initial_balance !== undefined ? parseFloat(user.initial_balance).toFixed(2) : "0.00"; 
         document.getElementById("address_line1").value = user.address_line1 || "";
         document.getElementById("address_line2").value = user.address_line2 || "";
         document.getElementById("city_pincode").value = user.city_pincode || "";
         document.getElementById("state").value = user.state || "";
         document.getElementById("gstin").value = user.gstin || "";
         document.getElementById("state_code").value = user.state_code || "";
+        // Note: The 'role' field is intentionally not exposed in the modal.
     }
     
     modal.classList.add('show');
@@ -1543,36 +1548,53 @@ function printLedger(tableId, ledgerTitle) {
 }
 async function handleUserSubmit(e) {
     e.preventDefault();
+    const companyId = currentUser ? currentUser.active_company_id : null;
+    const { 
+        username, email, phone, company, initial_balance, 
+        address_line1, address_line2, city_pincode, state, gstin, state_code 
+    } = e.target;
+
     const data = {
-        username: document.getElementById("username").value.trim(),
-        email: document.getElementById("email").value.trim(),
-        phone: document.getElementById("phone").value.trim(),
-        company: document.getElementById("company").value.trim(),
-        initial_balance: parseFloat(document.getElementById("balance").value),
-        address_line1: document.getElementById("address_line1").value.trim(),
-        address_line2: document.getElementById("address_line2").value.trim(),
-        city_pincode: document.getElementById("city_pincode").value.trim(),
-        state: document.getElementById("state").value.trim(),
-        gstin: document.getElementById("gstin").value.trim(),
-        state_code: document.getElementById("state_code").value.trim(),
+        username: username.value.trim(),
+        email: email.value.trim(),
+        phone: phone.value.trim(),
+        company: company.value.trim(),
+        initial_balance: parseFloat(initial_balance.value),
+        address_line1: address_line1.value.trim(),
+        address_line2: address_line2.value.trim(),
+        city_pincode: city_pincode.value.trim(),
+        state: state.value.trim(),
+        gstin: gstin.value.trim(),
+        state_code: state_code.value.trim(),
+        // NOTE: Role is omitted here, relying on the backend default/preservation logic.
     };
+
+    if (!companyId) return alert("Error: User session missing company ID.");
     if (!data.username || isNaN(data.initial_balance)) {
         alert("Customer Name and a valid Opening Balance are required.");
         return;
     }
+    
+    // Ensure editing ID is treated as a number for the URL
+    const finalEditingId = editingUserId ? parseInt(editingUserId) : null;
+    
     try {
-        const method = editingUserId ? "PUT" : "POST";
-        const endpoint = editingUserId ? `${API}/users/${editingUserId}` : `${API}/users`;
+        const method = finalEditingId ? "PUT" : "POST";
+        const endpoint = finalEditingId ? `${API}/users/${finalEditingId}` : `${API}/users`;
+        
         const res = await apiFetch(endpoint, {
             method,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(data),
         });
+
         if(!res) return;
         const result = await res.json();
         if (!res.ok)
             throw new Error(result.error || `Operation failed: ${res.statusText}`);
-        alert(result.message || (editingUserId ? "Customer updated" : "Customer added"));
+        
+        alert(result.message || (finalEditingId ? "Customer updated" : "Customer added"));
+        
         editingUserId = null;
         closeUserModal();
         await loadUsers();
@@ -1581,9 +1603,11 @@ async function handleUserSubmit(e) {
         }
     } catch (error) {
         console.error("Error submitting customer form:", error);
+        // Display the specific database error text
         alert("Operation failed: " + error.message);
     }
 }
+
 
 function formatLedgerDate(dateString) {
     if (!dateString) return "N/A";

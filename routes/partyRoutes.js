@@ -1,4 +1,4 @@
-// routes/partyRoutes.js (FINAL ROBUST VERSION)
+// routes/partyRoutes.js
 const express = require('express');
 const router = express.Router();
 // --- PG FIX: Import pool ---
@@ -162,20 +162,13 @@ router.put('/:id', async (req, res) => {
         // --- PRE-VALIDATION: Check for conflicts only if the username is changing ---
         if (oldUsername !== username) {
             // 1. Check for global user conflict (users.username UNIQUE)
-            const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1", [username]);
+            const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1 AND id != $2", [username, id]);
             if (duplicateUserCheck.length > 0) {
-                // If the duplicate ID is NOT the current ID, it's a conflict.
-                if (duplicateUserCheck[0].id != id) {
-                    return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
-                }
+                return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
             }
             
-            // 2. Check for local ledger conflict (ledgers.company_id, name UNIQUE)
-            const duplicateLedgerCheck = await dbQuery("SELECT l.id FROM ledgers l JOIN users u ON l.name = u.username AND l.company_id = $2 WHERE l.name = $1 AND u.id != $3", [username, companyId, id]);
-            
-            if (duplicateLedgerCheck.length > 0) {
-                 return res.status(400).json({ error: "A ledger with that name already exists in your company. Please choose another name." });
-            }
+            // 2. We skip explicit local ledger check here and rely on the DB constraint (23505) 
+            // for the ledger update in step 2, to avoid complex nested queries.
         }
         
         // FIX: Ensure the role is never set to NULL, using the existing role as fallback
@@ -190,7 +183,7 @@ router.put('/:id', async (req, res) => {
             address_line1 = $7, address_line2 = $8, city_pincode = $9, state = $10, gstin = $11, state_code = $12
             WHERE id = $13`;
         const userParams = [
-            username, email, phone, company, initial_balance, finalRole, // <-- FIXED role usage
+            username, email, phone, company, initial_balance, finalRole, 
             address_line1, address_line2, city_pincode, state, gstin, state_code, id
         ];
         const userResult = await client.query(userUpdateSql, userParams);
@@ -219,6 +212,7 @@ router.put('/:id', async (req, res) => {
         if (client) await client.query("ROLLBACK");
         let errorMsg = err.message;
         
+        // Catch PostgreSQL unique constraint violation
         if (err.code === '23505') { 
             errorMsg = "A user or ledger with that name already exists in your company.";
         }
