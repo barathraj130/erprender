@@ -90,7 +90,17 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
             paymentCategoryName = currentPaymentMade > 0 ? "Payment Received from Customer (Bank)" : "Product Return from Customer (Refund via Bank)";
         }
         
-        const paymentTxActualAmount = currentPaymentMade; // Preserve the sign: positive for received, negative for refund.
+        let paymentTxActualAmount = currentPaymentMade; // Amount entered by user (e.g., 2000)
+
+        // --- START FIX: Correct Transaction Amount Sign for Receivable Ledger ---
+        // If it's a Payment Received (positive paid_amount from FE input)
+        if (currentPaymentMade > 0 && paymentCategoryName.startsWith('Payment Received')) {
+            // It reduces the customer's debt (Credit to Receivable Ledger), so store as negative.
+            paymentTxActualAmount = -Math.abs(currentPaymentMade);
+        }
+        // Refunds (which are negative currentPaymentMade) are already negative, so we leave them.
+        // --- END FIX ---
+
         
         // FIX: Explicitly specify NULL for lender_id and agreement_id
         const paymentTransactionSql = `INSERT INTO transactions (company_id, user_id, lender_id, agreement_id, amount, description, category, date, related_invoice_id) 
@@ -98,7 +108,7 @@ async function createAssociatedTransactionsAndStockUpdate(client, invoiceId, com
         const paymentTransactionParams = [
             companyId, 
             finalCustomerId, 
-            paymentTxActualAmount, 
+            paymentTxActualAmount, // <-- Use the correctly signed amount
             `Payment/Refund for Invoice ${invoice_number}`, 
             paymentCategoryName, 
             invoice_date, 
@@ -376,18 +386,6 @@ router.put('/:id', async (req, res) => {
         const final_total_amount = amount_before_tax + total_cgst_amount + total_sgst_amount + total_igst_amount - (parseFloat(party_bill_returns_amount) || 0);
 
         // --- 3. Update the invoice header ---
-        // NOTE: We MUST fetch the existing paid_amount from the DB BEFORE update if we are only adding a "new" payment (payment_being_made_now).
-        // However, since we are DELETING and RE-CREATING transactions, and the current PUT expects the *new total paid amount* if it's not a new payment, 
-        // the current logic is to rely on the frontend sending the total paid amount in `paid_amount` if not using `payment_being_made_now`.
-        // The original logic here seems to compound `paid_amount` in the DB: `paid_amount = paid_amount + $14` (where $14 is initialPaymentAmount)
-        // If the frontend only sends the *new* payment amount in `payment_being_made_now` (as intended for a subsequent payment via PUT), this compounding is correct, provided the Sale Tx is correctly created.
-        
-        // Since this PUT is meant to overwrite the invoice details AND create *new* transactions for *new* payments only, we should update the total paid amount to the final amount the FE sends (if the FE calculates the total paid amount already)
-        
-        // However, due to the need to correctly calculate the `paid_amount` based on transactions, the FE should send the total accumulated paid amount OR this PUT must be split into 'Update Details' and 'Record New Payment'.
-        
-        // Sticking to the current structure: assume the FE sends the *new total* paid amount in the initial fetch, and only the *new payment* in `payment_being_made_now`.
-        // To be safe, we will assume the FE sends the *new payment* amount in `payment_being_made_now` and only update the incremental amount here.
         
         const updateInvoiceSql = `UPDATE invoices SET customer_id = $1, invoice_number = $2, invoice_date = $3, due_date = $4, total_amount = $5, amount_before_tax = $6, total_cgst_amount = $7, total_sgst_amount = $8, total_igst_amount = $9, party_bill_returns_amount = $10, status = $11, invoice_type = $12, notes = $13, paid_amount = paid_amount + $14, reverse_charge = $15, transportation_mode = $16, vehicle_number = $17, date_of_supply = $18, place_of_supply_state = $19, place_of_supply_state_code = $20, bundles_count = $21, consignee_name = $22, consignee_address_line1 = $23, consignee_address_line2 = $24, consignee_city_pincode = $25, consignee_state = $26, consignee_gstin = $27, consignee_state_code = $28, amount_in_words = $29, original_invoice_number = $30, updated_at = NOW() WHERE id = $31 AND company_id = $32 RETURNING id`;
         

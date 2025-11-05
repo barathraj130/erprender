@@ -79,6 +79,8 @@ router.post('/', async (req, res) => {
     
     // --- Invoice Payment Update ---
     if (parsedRelatedInvoiceId && category.toLowerCase().includes('payment received')) {
+        // Since payment received for a user is stored as a negative amount in this route, 
+        // we must use the absolute value to update the invoice's paid_amount.
         const paymentAmount = Math.abs(amount); 
         const updateInvoiceSql = 'UPDATE invoices SET paid_amount = paid_amount + $1 WHERE id = $2';
         await client.query(updateInvoiceSql, [paymentAmount, parsedRelatedInvoiceId]);
@@ -267,8 +269,10 @@ router.delete('/:id', async (req, res) => {
     const txToDelete = txToDeleteRows.rows[0];
     
     // 2. Revert Invoice Payment (if applicable)
+    // NOTE: Payment transactions are stored as NEGATIVE amounts in the transactions table (Credit to Receivable).
     const isPayment = (txToDelete.category || '').toLowerCase().includes('payment received');
     if (txToDelete.related_invoice_id && isPayment) {
+        // We reverse the *paid_amount* on the invoice by subtracting the absolute value of the transaction amount.
         const amountToReverse = Math.abs(parseFloat(txToDelete.amount || 0));
         const invUpdateSql = 'UPDATE invoices SET paid_amount = paid_amount - $1 WHERE id = $2 AND company_id = $3';
         await client.query(invUpdateSql, [amountToReverse, txToDelete.related_invoice_id, companyId]);
