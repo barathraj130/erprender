@@ -143,18 +143,24 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const companyId = req.user.active_company_id;
-    const { username, email, phone, company, initial_balance, role,
+    const { username, email, phone, company, initial_balance, 
             address_line1, address_line2, city_pincode, state, gstin, state_code } = req.body;
+    
+    // Explicitly check for role if sent, but default to preservation.
+    let { role } = req.body; 
 
     if (!username) return res.status(400).json({ error: "Username is required." });
     
     let client;
     try {
-        const oldUserRows = await dbQuery("SELECT username FROM users WHERE id = $1", [id]);
+        const oldUserRows = await dbQuery("SELECT username, role FROM users WHERE id = $1", [id]);
         const oldUser = oldUserRows[0];
 
         if (!oldUser) return res.status(404).json({error: "User not found."});
         const oldUsername = oldUser.username;
+        
+        // FIX: Ensure the role is never set to NULL, using the existing role as fallback
+        const finalRole = role || oldUser.role || 'user';
 
         client = await pool.connect();
         await client.query("BEGIN");
@@ -165,7 +171,7 @@ router.put('/:id', async (req, res) => {
             address_line1 = $7, address_line2 = $8, city_pincode = $9, state = $10, gstin = $11, state_code = $12
             WHERE id = $13`;
         const userParams = [
-            username, email, phone, company, initial_balance, role,
+            username, email, phone, company, initial_balance, finalRole,
             address_line1, address_line2, city_pincode, state, gstin, state_code, id
         ];
         const userResult = await client.query(userUpdateSql, userParams);
