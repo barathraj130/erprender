@@ -2446,12 +2446,12 @@ async function loadCustomerSummaries() {
             return;
         }
 
-        let serialNumber = 1; // For user-friendly row numbering
+        let serialNumber = 1;
 
         customersOnly.forEach((user) => {
-            // NOTE: remaining_balance is pre-calculated by partyRoutes.js (using the DB query)
-            const receivable = parseFloat(user.remaining_balance || 0);
-
+            
+            // --- START FIX: Calculate Receivable by correcting bad transaction data ---
+            let receivable = parseFloat(user.initial_balance || 0);
             let loanOutstanding = 0;
             let chitNetPosition = 0;
 
@@ -2459,19 +2459,31 @@ async function loadCustomerSummaries() {
 
             userTransactions.forEach((tx) => {
                 const categoryInfo = transactionCategories.find((cat) => cat.name === tx.category);
+                const rawAmount = parseFloat(tx.amount || 0);
+                let correctedAmount = rawAmount; 
+                
+                // *** CORRECTION LOGIC ***
+                // Apply the same retroactive correction as in the modal display:
+                if (categoryInfo && categoryInfo.group === 'customer_payment' && rawAmount > 0) {
+                    correctedAmount = -rawAmount; // Flip positive payments to negative (Credit)
+                }
+                // Note: Opening Balance Adjustment (if present) is intentionally not flipped here
+                // because it's assumed to be pre-signed correctly during onboarding.
+                // *** END CORRECTION ***
+
                 if (categoryInfo) {
-                    const amount = parseFloat(tx.amount);
-                    if (categoryInfo.group === "customer_loan_out") {
-                        loanOutstanding += amount;
-                    } else if (categoryInfo.group === "customer_loan_in") {
-                        loanOutstanding += amount; // These are negative, so it correctly reduces the outstanding amount
-                    } else if (categoryInfo.group === "customer_chit_in") {
-                        chitNetPosition -= amount; // Business receives, so liability to customer increases
-                    } else if (categoryInfo.group === "customer_chit_out") {
-                        chitNetPosition -= amount; // Business pays out, liability decreases
+                    if (categoryInfo.group === "customer_loan_out" || categoryInfo.group === "customer_loan_in") {
+                        loanOutstanding += correctedAmount; 
+                    } else if (categoryInfo.group === "customer_chit_in" || categoryInfo.group === "customer_chit_out") {
+                        chitNetPosition -= correctedAmount; // Chit balance calculation logic remains complex, but we use the corrected sign for inflow/outflow balance impact.
                     }
                 }
+                
+                // Add the corrected amount to the receivable balance
+                receivable += correctedAmount;
             });
+            // --- END FIX ---
+
 
             const row = customerTableBody.insertRow();
             
@@ -2480,7 +2492,7 @@ async function loadCustomerSummaries() {
             row.insertCell().textContent = (parseFloat(user.initial_balance) || 0).toFixed(2);
             
             const receivableCell = row.insertCell();
-            receivableCell.textContent = receivable.toFixed(2);
+            receivableCell.textContent = receivable.toFixed(2); // Use the newly calculated 'receivable'
             receivableCell.className = receivable > 0 ? "negative-balance num" : receivable < 0 ? "positive-balance num" : "num";
             
             const loanCell = row.insertCell();
@@ -2514,7 +2526,6 @@ async function loadCustomerSummaries() {
         }
     }
 }
-
 async function loadSupplierSummaries() {
     const supplierTableBody = document.getElementById("supplierTableBody");
     if(!supplierTableBody) return;
