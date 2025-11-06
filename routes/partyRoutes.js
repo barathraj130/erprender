@@ -210,6 +210,7 @@ router.put('/:id', async (req, res) => {
         }
 
         // 2. Fetch the target ledger ID using the OLD username (safer lookup method)
+        // This query is critical as it uses the name that existed *before* the update attempt.
         const ledgerIdRows = await client.query("SELECT id FROM ledgers WHERE name = $1 AND company_id = $2", [oldUsername, companyId]);
         const ledgerId = ledgerIdRows.rows[0]?.id;
         
@@ -218,30 +219,26 @@ router.put('/:id', async (req, res) => {
             return res.status(500).json({ error: "Critical Error: Could not find associated accounting ledger." });
         }
         
-        // 3. Construct and run Ledger update statement
+        // 3. Construct and run Ledger update statement (using Ledger ID in WHERE clause)
         const isDr = initialBalanceFloat >= 0;
         
-        let ledgerUpdateFields = `opening_balance = $1, is_dr = $2, gstin = $3, state = $4`;
-        let ledgerUpdateParams = [initial_balance, isDr, gstin, state];
+        let ledgerUpdateFields;
+        let ledgerUpdateParams;
         
+        // Dynamic construction: Only include NAME if it changed
         if (nameIsChanging) {
-            // If the name is changing, prepend the name update parameter
-            ledgerUpdateFields = `name = $${ledgerUpdateParams.length + 1}, ` + ledgerUpdateFields;
-            ledgerUpdateParams.push(username); 
-            // Since we use array parameters, we must reverse the order of push to match the order in the SQL statement.
-            // Let's reset the logic for clarity and ensure name is first if needed.
-            
             ledgerUpdateFields = `name = $1, opening_balance = $2, is_dr = $3, gstin = $4, state = $5`;
             ledgerUpdateParams = [username, initial_balance, isDr, gstin, state];
         } else {
+             // CRITICAL FIX: Do NOT include 'name' in the SET clause if it didn't change
              ledgerUpdateFields = `opening_balance = $1, is_dr = $2, gstin = $3, state = $4`;
              ledgerUpdateParams = [initial_balance, isDr, gstin, state];
         }
         
         // Add WHERE clause parameters (Ledger ID and Company ID)
+        const finalLedgerUpdateSql = `UPDATE ledgers SET ${ledgerUpdateFields} WHERE id = $${ledgerUpdateParams.length + 1} AND company_id = $${ledgerUpdateParams.length + 2}`;
         ledgerUpdateParams.push(ledgerId, companyId);
-        
-        const finalLedgerUpdateSql = `UPDATE ledgers SET ${ledgerUpdateFields} WHERE id = $${ledgerUpdateParams.length - 1} AND company_id = $${ledgerUpdateParams.length}`;
+
 
         await client.query(finalLedgerUpdateSql, ledgerUpdateParams);
 
