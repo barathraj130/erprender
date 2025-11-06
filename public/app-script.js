@@ -2543,6 +2543,32 @@ async function loadCustomerSummaries() {
         }
     }
 }
+async function exportCustomerSummary() {
+    try {
+        const res = await apiFetch(`${API}/users/export/customer-summary`);
+        
+        if (!res || !res.ok) {
+            const errorText = await res.text();
+            throw new Error(`Export failed: ${res.statusText} - ${errorText}`);
+        }
+
+        // Get the CSV content as text
+        const csv = await res.text();
+
+        // Create a blob and trigger download
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.setAttribute("download", "Customer_Receivable_Summary.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+    } catch (error) {
+        console.error("Error during customer summary export:", error);
+        alert(`Failed to export customer summary: ${error.message}`);
+    }
+}
 async function loadSupplierSummaries() {
     const supplierTableBody = document.getElementById("supplierTableBody");
     if(!supplierTableBody) return;
