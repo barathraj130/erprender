@@ -147,6 +147,7 @@ router.put('/:id', async (req, res) => {
     const { username, email, phone, company, initial_balance, 
             address_line1, address_line2, city_pincode, state, gstin, state_code } = req.body;
     
+    // Explicitly handle role if sent, but default to preservation.
     let { role } = req.body; 
 
     if (!username) return res.status(400).json({ error: "Username is required." });
@@ -164,13 +165,10 @@ router.put('/:id', async (req, res) => {
         // --- PRE-VALIDATION: Check for conflicts only if the username is changing ---
         if (oldUsername !== username) {
             // 1. Check for global user conflict (users.username UNIQUE)
-            // We ensure no OTHER user uses the new username.
             const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1 AND id != $2", [username, userId]);
             if (duplicateUserCheck.length > 0) {
                 return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
             }
-            
-            // 2. We rely on the DB constraint (23505) for the local ledger conflict.
         }
         
         // FIX: Ensure the role is never set to NULL, using the existing role as fallback
@@ -216,9 +214,8 @@ router.put('/:id', async (req, res) => {
         
         // Catch PostgreSQL unique constraint violation
         if (err.code === '23505') { 
-            // Ensure 400 status is returned for user conflicts
-            errorMsg = "A user or ledger with that name already exists in your company.";
-             return res.status(400).json({ error: "Failed to update user: " + errorMsg, details: err.message });
+            errorMsg = "A user or ledger with that name already exists in your company. Please ensure there are no duplicate accounts/parties with this name.";
+            return res.status(400).json({ error: "Failed to update user: " + errorMsg, details: err.message });
         }
         
         console.error("PG PUT User/Party Error:", errorMsg, err.stack);
