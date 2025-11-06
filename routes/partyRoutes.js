@@ -1,3 +1,4 @@
+// routes/partyRoutes.js
 const express = require('express');
 const router = express.Router();
 // --- PG FIX: Import pool ---
@@ -208,20 +209,24 @@ router.put('/:id', async (req, res) => {
             return res.status(404).json({ error: "User not found or no changes made." });
         }
 
-        // 2. Update Ledger name if username changed
-        if (nameIsChanging) {
-            // Use oldUsername in WHERE clause to find the specific ledger row, 
-            // then update its name to the new username.
-            const ledgerUpdateNameSql = `UPDATE ledgers SET name = $1 WHERE name = $2 AND company_id = $3`;
-            await client.query(ledgerUpdateNameSql, [username, oldUsername, companyId]);
+        // 2. Fetch the target ledger ID using the OLD username (safer lookup method)
+        // This query finds the ID of the ledger we intend to update.
+        const ledgerIdRows = await client.query("SELECT id FROM ledgers WHERE name = $1 AND company_id = $2", [oldUsername, companyId]);
+        const ledgerId = ledgerIdRows.rows[0]?.id;
+        
+        if (!ledgerId) {
+            // Should not happen if creation was successful
+            await client.query("ROLLBACK");
+            return res.status(500).json({ error: "Critical Error: Could not find associated accounting ledger." });
         }
         
-        // 3. Update Ledger details (opening balance, gstin, state)
-        // We use the new (or unchanged) username in the WHERE clause here.
-        const ledgerUpdateDetailsSql = `UPDATE ledgers SET opening_balance = $1, is_dr = $2, gstin = $3, state = $4 
-                                        WHERE name = $5 AND company_id = $6`;
+        // 3. Update Ledger details, including name if changing (using Ledger ID in WHERE clause)
+        // This query is safe because we are using the stable internal ID for the WHERE clause.
+        const ledgerUpdateSql = `UPDATE ledgers SET 
+            name = $1, opening_balance = $2, is_dr = $3, gstin = $4, state = $5 
+            WHERE id = $6 AND company_id = $7`;
         const isDr = initialBalanceFloat >= 0;
-        await client.query(ledgerUpdateDetailsSql, [initial_balance, isDr, gstin, state, username, companyId]);
+        await client.query(ledgerUpdateSql, [username, initial_balance, isDr, gstin, state, ledgerId, companyId]);
 
         await client.query("COMMIT");
         res.json({ message: 'Party and Ledger updated successfully' });
