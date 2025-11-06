@@ -218,12 +218,32 @@ router.put('/:id', async (req, res) => {
             return res.status(500).json({ error: "Critical Error: Could not find associated accounting ledger." });
         }
         
-        // 3. Update Ledger details, including name (using Ledger ID in WHERE clause)
-        const ledgerUpdateSql = `UPDATE ledgers SET 
-            name = $1, opening_balance = $2, is_dr = $3, gstin = $4, state = $5 
-            WHERE id = $6 AND company_id = $7`;
+        // 3. Construct and run Ledger update statement
         const isDr = initialBalanceFloat >= 0;
-        await client.query(ledgerUpdateSql, [username, initial_balance, isDr, gstin, state, ledgerId, companyId]);
+        
+        let ledgerUpdateFields = `opening_balance = $1, is_dr = $2, gstin = $3, state = $4`;
+        let ledgerUpdateParams = [initial_balance, isDr, gstin, state];
+        
+        if (nameIsChanging) {
+            // If the name is changing, prepend the name update parameter
+            ledgerUpdateFields = `name = $${ledgerUpdateParams.length + 1}, ` + ledgerUpdateFields;
+            ledgerUpdateParams.push(username); 
+            // Since we use array parameters, we must reverse the order of push to match the order in the SQL statement.
+            // Let's reset the logic for clarity and ensure name is first if needed.
+            
+            ledgerUpdateFields = `name = $1, opening_balance = $2, is_dr = $3, gstin = $4, state = $5`;
+            ledgerUpdateParams = [username, initial_balance, isDr, gstin, state];
+        } else {
+             ledgerUpdateFields = `opening_balance = $1, is_dr = $2, gstin = $3, state = $4`;
+             ledgerUpdateParams = [initial_balance, isDr, gstin, state];
+        }
+        
+        // Add WHERE clause parameters (Ledger ID and Company ID)
+        ledgerUpdateParams.push(ledgerId, companyId);
+        
+        const finalLedgerUpdateSql = `UPDATE ledgers SET ${ledgerUpdateFields} WHERE id = $${ledgerUpdateParams.length - 1} AND company_id = $${ledgerUpdateParams.length}`;
+
+        await client.query(finalLedgerUpdateSql, ledgerUpdateParams);
 
         await client.query("COMMIT");
         res.json({ message: 'Party and Ledger updated successfully' });
