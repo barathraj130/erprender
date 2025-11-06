@@ -1610,6 +1610,57 @@ function formatLedgerDate(dateString) {
     const year = date.getFullYear();
     return `${day}/${month}/${year}`;
 }
+let customerOutstandingFilter = 'all';
+
+function setOutstandingFilter(type) {
+    customerOutstandingFilter = type;
+    renderCustomers();
+}
+
+function renderCustomers() {
+    const tbody = document.getElementById("customerTableBody");
+    tbody.innerHTML = "";
+
+    let filtered = customers.slice();
+
+    if (customerOutstandingFilter === 'owe_me') {
+        filtered = filtered.filter(c => parseFloat(c.remaining_balance) > 0);
+    } else if (customerOutstandingFilter === 'i_owe') {
+        filtered = filtered.filter(c => parseFloat(c.remaining_balance) < 0);
+    } else if (customerOutstandingFilter === 'settled') {
+        filtered = filtered.filter(c => Math.abs(parseFloat(c.remaining_balance)) < 1);
+    }
+
+    let totalOutstanding = 0;
+
+    filtered.forEach((customer, index) => {
+        const out = parseFloat(customer.remaining_balance || 0);
+        totalOutstanding += out;
+
+        const color = out > 0 ? 'red' : out < 0 ? 'green' : 'gray';
+
+        const row = document.createElement("tr");
+        row.innerHTML = `
+            <td>${index + 1}</td>
+            <td>${customer.username}</td>
+            <td class="num" style="font-weight:600; color:${color};">
+                ₹ ${out.toLocaleString()}
+            </td>
+            <td>
+                <button class="btn btn-small" onclick="openUserModal(${customer.id})">Edit</button>
+                <button class="btn btn-secondary btn-small" onclick="openUserTransactionHistory(${customer.id}, '${customer.username}')">History</button>
+                <button class="btn btn-danger btn-small" onclick="deleteUser(${customer.id})">Delete</button>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+
+    const color = totalOutstanding > 0 ? 'red' : totalOutstanding < 0 ? 'green' : 'gray';
+    document.getElementById("totalOutstandingDisplay").innerHTML =
+        `Total Outstanding: <span style="color:${color}; font-weight:700;">₹ ${totalOutstanding.toLocaleString()}</span>`;
+
+    document.getElementById("navCustomerCount").textContent = customers.length;
+}
 
 
 function openUserModal(user = null) {
