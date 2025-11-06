@@ -31,6 +31,27 @@ function convertToCsv(data, headers) {
     return [headerRow, ...rows].join('\n');
 }
 
+// Helper to calculate Receivable balance for a user (based on Ledger logic)
+async function calculateReceivable(userId, companyId) {
+    // 1. Get Opening Balance (which acts as the historical balance)
+    const userRows = await dbQuery("SELECT initial_balance FROM users WHERE id = $1", [userId]);
+    const user = userRows[0];
+    if (!user) return 0;
+
+    let receivable = parseFloat(user.initial_balance || 0);
+
+    // 2. Sum of all transactions associated with this user
+    const txRows = await dbQuery(`
+        SELECT COALESCE(SUM(amount), 0) AS total_amount_change
+        FROM transactions 
+        WHERE user_id = $1 AND company_id = $2
+    `, [userId, companyId]);
+
+    receivable += parseFloat(txRows[0].total_amount_change || 0);
+
+    return receivable;
+}
+
 // -------------------- GET ALL PARTIES --------------------
 router.get('/', async (req, res) => {
     const companyId = req.user.active_company_id;
@@ -64,7 +85,7 @@ router.get('/export', async (req, res) => {
         ORDER BY username ASC
     `, [companyId]);
 
-    const csv = convertToCsv(data, [
+    const headers = [
         { key: "username", label: "Customer Name" },
         { key: "phone", label: "Phone" },
         { key: "email", label: "Email" },
@@ -72,12 +93,61 @@ router.get('/export', async (req, res) => {
         { key: "state", label: "State" },
         { key: "gstin", label: "GSTIN" },
         { key: "initial_balance", label: "Opening Balance" }
-    ]);
+    ];
+
+    const csv = convertToCsv(data, headers);
 
     res.setHeader("Content-Disposition", "attachment; filename=Customer_List.csv");
     res.set("Content-Type", "text/csv");
     res.send(csv);
 });
+
+// -------------------- EXPORT CUSTOMER SUMMARY (NEW) --------------------
+// @route   GET /api/users/export/customer-summary
+// @desc    Export Customer Name and calculated Receivable Balance
+// @access  Protected
+router.get('/export/customer-summary', async (req, res) => {
+    const companyId = req.user.active_company_id;
+
+    try {
+        const userRows = await dbQuery(`
+            SELECT id, username
+            FROM users
+            JOIN user_companies ON users.id = user_companies.user_id
+            WHERE user_companies.company_id = $1 AND users.role != 'admin'
+            ORDER BY username ASC
+        `, [companyId]);
+
+        const exportDataPromises = userRows.map(async (user) => {
+            // Calculate the final receivable balance for each user
+            const finalReceivable = await calculateReceivable(user.id, companyId);
+            
+            return {
+                "PARTY NAME": user.username,
+                "AMOUNT": finalReceivable.toFixed(2)
+            };
+        });
+
+        const data = await Promise.all(exportDataPromises);
+        
+        // Convert to CSV
+        const headers = [
+            { key: "PARTY NAME", label: "PARTY NAME" },
+            { key: "AMOUNT", label: "AMOUNT" }
+        ];
+
+        const csv = convertToCsv(data, headers);
+
+        res.setHeader("Content-Disposition", "attachment; filename=Customer_Receivable_Summary.csv");
+        res.set("Content-Type", "text/csv");
+        res.send(csv);
+
+    } catch (err) {
+        console.error("Error exporting customer summary:", err.message);
+        res.status(500).json({ error: "Failed to generate customer summary export." });
+    }
+});
+
 
 // -------------------- EXPORT OUTSTANDING (DUE FIRST) --------------------
 router.get('/export/outstanding', async (req, res) => {
@@ -97,12 +167,14 @@ router.get('/export/outstanding', async (req, res) => {
     `;
     const rows = await dbQuery(sql, [companyId]);
 
-    const csv = convertToCsv(rows, [
+    const headers = [
         { key: "customer_name", label: "Customer Name" },
         { key: "initial_balance", label: "Opening Balance" },
         { key: "transaction_total", label: "Transaction Total" },
         { key: "outstanding_balance", label: "Outstanding Balance" }
-    ]);
+    ];
+
+    const csv = convertToCsv(rows, headers);
 
     res.setHeader("Content-Disposition", "attachment; filename=Outstanding_Due_First.csv");
     res.set("Content-Type", "text/csv");
@@ -127,12 +199,14 @@ router.get('/export/outstanding/alpha', async (req, res) => {
     `;
     const rows = await dbQuery(sql, [companyId]);
 
-    const csv = convertToCsv(rows, [
+    const headers = [
         { key: "customer_name", label: "Customer Name" },
         { key: "initial_balance", label: "Opening Balance" },
         { key: "transaction_total", label: "Transaction Total" },
         { key: "outstanding_balance", label: "Outstanding Balance" }
-    ]);
+    ];
+
+    const csv = convertToCsv(rows, headers);
 
     res.setHeader("Content-Disposition", "attachment; filename=Outstanding_AtoZ.csv");
     res.set("Content-Type", "text/csv");
