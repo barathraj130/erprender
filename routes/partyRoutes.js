@@ -1,4 +1,3 @@
-// routes/partyRoutes.js
 const express = require('express');
 const router = express.Router();
 // --- PG FIX: Import pool ---
@@ -162,28 +161,47 @@ router.put('/:id', async (req, res) => {
         if (!oldUser) return res.status(404).json({error: "User not found."});
         const oldUsername = oldUser.username;
         
-        // --- PRE-VALIDATION: Check for conflicts only if the username is changing ---
-        if (oldUsername !== username) {
-            // 1. Check for global user conflict (users.username UNIQUE)
-            const duplicateUserCheck = await dbQuery("SELECT id FROM users WHERE username = $1 AND id != $2", [username, userId]);
+        // FIX: Ensure the role is never set to NULL, using the existing role as fallback
+        const finalRole = role || oldUser.role || 'user';
+        const initialBalanceFloat = parseFloat(initial_balance || 0);
+
+        const nameIsChanging = (oldUsername !== username);
+        
+        // --- Pre-validation for Conflicts ---
+        if (nameIsChanging) {
+            // Check 1A: Global user conflict (users.username UNIQUE)
+            const duplicateUserCheckSql = "SELECT id FROM users WHERE username = $1 AND id != $2";
+            const duplicateUserCheck = await dbQuery(duplicateUserCheckSql, [username, userId]);
             if (duplicateUserCheck.length > 0) {
                 return res.status(400).json({ error: "A user with that username already exists globally. Please choose another." });
             }
+            
+            // Check 1B: Local ledger conflict (ledgers.name UNIQUE within company_id)
+            // Check if a ledger already exists with the NEW username AND is not the ledger currently holding the OLD username.
+            // If the name is changed, this query ensures the new name doesn't conflict with another existing ledger.
+            const conflictingLedgerSql = `
+                SELECT id 
+                FROM ledgers 
+                WHERE name = $1 AND company_id = $2 
+                  AND name != $3
+            `;
+            const conflictingLedger = await dbQuery(conflictingLedgerSql, [username, companyId, oldUsername]);
+
+            if (conflictingLedger.length > 0) {
+                return res.status(400).json({ error: "An accounting ledger with this name already exists in your company. Please choose a different party name." });
+            }
         }
         
-        // FIX: Ensure the role is never set to NULL, using the existing role as fallback
-        const finalRole = role || oldUser.role || 'user';
-
         client = await pool.connect();
         await client.query("BEGIN");
         
-        // 1. Update User
+        // 1. Update User (Even if the name didn't change, we update other user details)
         const userUpdateSql = `UPDATE users SET 
             username = $1, email = $2, phone = $3, company = $4, initial_balance = $5, role = $6, 
             address_line1 = $7, address_line2 = $8, city_pincode = $9, state = $10, gstin = $11, state_code = $12
             WHERE id = $13`;
         const userParams = [
-            username, email, phone, company, initial_balance, finalRole, 
+            username, email, phone, company, initialBalanceFloat, finalRole, 
             address_line1, address_line2, city_pincode, state, gstin, state_code, userId
         ];
         const userResult = await client.query(userUpdateSql, userParams);
@@ -194,7 +212,7 @@ router.put('/:id', async (req, res) => {
         }
 
         // 2. Update Ledger name if username changed
-        if (oldUsername !== username) {
+        if (nameIsChanging) {
             const ledgerUpdateSql = `UPDATE ledgers SET name = $1 WHERE name = $2 AND company_id = $3`;
             await client.query(ledgerUpdateSql, [username, oldUsername, companyId]);
         }
@@ -202,7 +220,7 @@ router.put('/:id', async (req, res) => {
         // 3. Update Ledger opening balance, is_dr status, etc.
         const ledgerUpdateDetailsSql = `UPDATE ledgers SET opening_balance = $1, is_dr = $2, gstin = $3, state = $4 
                                         WHERE name = $5 AND company_id = $6`;
-        const isDr = parseFloat(initial_balance || 0) >= 0;
+        const isDr = initialBalanceFloat >= 0;
         await client.query(ledgerUpdateDetailsSql, [initial_balance, isDr, gstin, state, username, companyId]);
 
         await client.query("COMMIT");
@@ -215,6 +233,13 @@ router.put('/:id', async (req, res) => {
         // Catch PostgreSQL unique constraint violation
         if (err.code === '23505') { 
             errorMsg = "A user or ledger with that name already exists in your company. Please ensure there are no duplicate accounts/parties with this name.";
+            
+            if (err.constraint && err.constraint.includes('users_username_key')) {
+                 errorMsg = "This username is already taken by another user (globally). Please choose a unique name.";
+            } else if (err.constraint && err.constraint.includes('ledgers_company_id_name_key')) {
+                 errorMsg = "An accounting ledger with this name already exists in your company.";
+            } 
+            
             return res.status(400).json({ error: "Failed to update user: " + errorMsg, details: err.message });
         }
         
