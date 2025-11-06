@@ -168,37 +168,30 @@
             </div>
         </section>
 
-       <!-- CUSTOMER MANAGEMENT SECTION START -->
-<section id="customerManagementSection" class="content-section">
-    <div style="display:flex; align-items:center; justify-content:space-between;">
-        <h2>Customer Management</h2>
-
-        <div class="outstanding-filters">
-            <button class="btn btn-small" onclick="setOutstandingFilter('all')">ALL</button>
-            <button class="btn btn-small" onclick="setOutstandingFilter('owe_me')">CUSTOMERS OWE ME</button>
-            <button class="btn btn-small" onclick="setOutstandingFilter('i_owe')">I OWE CUSTOMERS</button>
-            <button class="btn btn-small" onclick="setOutstandingFilter('settled')">SETTLED</button>
-        </div>
-    </div>
-
-    <h3 id="totalOutstandingDisplay" style="margin-top:8px; font-weight:600;"></h3>
-
-    <table class="data-table">
-        <thead>
-        <tr>
-            <th>#</th>
-            <th>Name</th>
-            <th class="num">Outstanding (₹)</th>
-            <th>Actions</th>
-        </tr>
-        </thead>
-
-        <tbody id="customerTableBody">
-        </tbody>
-    </table>
-</section>
-<!-- CUSTOMER MANAGEMENT SECTION END -->
-
+        <!-- Customer Management Section -->
+        <section id="customerManagementSection" class="app-section" style="display: none;">
+            <div class="section-header">
+                <h2>Customer Management</h2>
+                <button class="btn btn-primary" onclick="openUserModal()"><i class="fas fa-plus"></i> Add New Customer</button>
+            </div>
+            <div class="table-container">
+                <table id="customerTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Name</th>
+                            <th class="num">Opening Balance (₹)</th>
+                            <th class="num">Receivable (₹)</th>
+                            <th class="num">Loan Outstanding (₹)</th>
+                            <th class="num">Chit Position (₹)</th>
+                            <th>Joined On</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="customerTableBody"></tbody>
+                </table>
+            </div>
+        </section>
     
         <!-- Supplier Management Section -->
         <section id="supplierManagementSection" class="app-section" style="display: none;">
