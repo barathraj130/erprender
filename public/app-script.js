@@ -2571,6 +2571,7 @@ async function exportCustomerSummary() {
         alert(`Failed to export customer summary: ${error.message}`);
     }
 }
+// Helper function to determine the sign for the Cash/Bank Ledger
 function getLedgerAmount(tx) {
     let amount = parseFloat(tx.amount || 0);
     if (amount === 0) return 0;
@@ -4196,32 +4197,8 @@ function addInvLineItemRow(itemData = null) {
     uomInput.value = itemData ? (itemData.unit_of_measure || itemData.final_unit_of_measure || "Pcs") : "Pcs";
     uomCell.appendChild(uomInput);
 
-    // --- THIS IS THE KEY FIX ---
-    productSelect.addEventListener("change", (e) => {
-        const selectedOption = e.target.options[e.target.selectedIndex];
-        const row = e.target.closest("tr");
-        if (!row) return;
-
-        const currentDescriptionInput = row.querySelector(".inv-line-description");
-        
-        if (e.target.value === "custom") {
-            currentDescriptionInput.value = ""; 
-            currentDescriptionInput.placeholder = "Enter custom service/item";
-            row.querySelector(".inv-line-price").value = "0.00";
-            row.querySelector(".inv-line-hsn").value = "";
-            row.querySelector(".inv-line-uom").value = "Svc"; 
-        } else if (selectedOption && selectedOption.value) {
-            // ALWAYS update the description, price, HSN, and UOM on change.
-            currentDescriptionInput.value = selectedOption.dataset.description || "";
-            currentDescriptionInput.placeholder = "Manual Description (if needed)";
-            row.querySelector(".inv-line-price").value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
-            row.querySelector(".inv-line-hsn").value = selectedOption.dataset.hsn || "";
-            row.querySelector(".inv-line-uom").value = selectedOption.dataset.uom || "Pcs";
-        }
-        updateInvLineItemTotal(row);
-    });
-    // --- END OF FIX ---
-
+    // --- Price/Qty/Discount Inputs ---
+    
     const qtyCell = newRow.insertCell();
     const qtyInput = document.createElement("input");
     qtyInput.type = "number";
@@ -4250,6 +4227,8 @@ function addInvLineItemRow(itemData = null) {
     discountInput.addEventListener("input", (e) => updateInvLineItemTotal(e.target.closest("tr")));
     discountCell.appendChild(discountInput);
     
+    // --- End Price/Qty/Discount Inputs ---
+    
     const taxableAmountCell = newRow.insertCell();
     taxableAmountCell.className = "inv-line-item-taxable-amount num";
     taxableAmountCell.textContent = itemData ? (parseFloat(itemData.taxable_value) || 0).toFixed(2) : "0.00";
@@ -4262,15 +4241,44 @@ function addInvLineItemRow(itemData = null) {
     removeButton.innerHTML = "×";
     removeButton.onclick = () => { newRow.remove(); updateInvTotals(); };
     actionCell.appendChild(removeButton);
+    
+    // --- Event Listener Logic (Crucial for auto-filling and calculating) ---
+    productSelect.addEventListener("change", (e) => {
+        const selectedOption = e.target.options[e.target.selectedIndex];
+        const row = e.target.closest("tr");
+        if (!row) return;
+
+        const currentDescriptionInput = row.querySelector(".inv-line-description");
+        
+        if (e.target.value === "custom") {
+            // Keep existing quantity, clear price/HSN/UoM for manual entry
+            currentDescriptionInput.value = ""; 
+            currentDescriptionInput.placeholder = "Enter custom service/item";
+            row.querySelector(".inv-line-price").value = "0.00";
+            row.querySelector(".inv-line-hsn").value = "";
+            row.querySelector(".inv-line-uom").value = "Svc"; 
+        } else if (selectedOption && selectedOption.value) {
+            // Populate fields from product data
+            currentDescriptionInput.value = selectedOption.dataset.description || "";
+            currentDescriptionInput.placeholder = "Manual Description (if needed)";
+            row.querySelector(".inv-line-price").value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
+            row.querySelector(".inv-line-hsn").value = selectedOption.dataset.hsn || "";
+            row.querySelector(".inv-line-uom").value = selectedOption.dataset.uom || "Pcs";
+        }
+        updateInvLineItemTotal(row);
+    });
+    // --- End Event Listener Logic ---
 
     if (itemData) {
         if (itemData.product_id) productSelect.value = itemData.product_id;
         else productSelect.value = "custom"; 
         descriptionInput.value = itemData.description || ""; 
+        // Trigger change event to set price/HSN/UoM based on selection/custom logic
         const event = new Event('change', { bubbles: true }); 
         productSelect.dispatchEvent(event);
     } else {
-        updateInvLineItemTotal(newRow); 
+        // Run updateInvTotals immediately for a new, empty row to initialize totals
+        updateInvTotals(); 
     }
 }
 function updateInvLineItemTotal(row) {
