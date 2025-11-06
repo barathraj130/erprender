@@ -2519,7 +2519,8 @@ async function loadCustomerSummaries() {
             chitCell.textContent = chitNetPosition.toFixed(2);
             chitCell.className = chitNetPosition >= 0 ? "negative-balance num" : "positive-balance num";
             
-            row.insertCell().textContent = new Date(user.created_at).toLocaleDateString();
+            // FIX APPLIED HERE: Use formatLedgerDate
+            row.insertCell().textContent = formatLedgerDate(user.created_at);
             
             const actionsCell = row.insertCell();
             actionsCell.innerHTML = `
