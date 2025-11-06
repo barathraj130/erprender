@@ -1320,8 +1320,8 @@ async function loadCashLedger(date = null) {
                 return false;
             })
             .forEach((t) => {
-                // Rely solely on the stored sign of t.amount (Positive = Inflow/Debit)
-                openingCashBalance += parseFloat(t.amount || 0); 
+                // Use the new helper function to get the correctly signed ledger amount
+                openingCashBalance += getLedgerAmount(t); 
             });
         
         // 2. Filter transactions ON the selected date.
@@ -1362,21 +1362,22 @@ async function loadCashLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No cash transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                const entryAmount = parseFloat(entry.amount || 0);
+                // Use the new helper function for the correct sign
+                const correctedAmount = getLedgerAmount(entry); 
                 
                 let debit = ""; 
                 let credit = ""; 
                 
-                // If amount is positive -> Debit (IN); if negative -> Credit (OUT)
-                if(entryAmount > 0) {
-                    debit = entryAmount.toFixed(2);
-                    dailyTotalDebits += entryAmount;
+                // If corrected amount is positive -> Debit (IN); if negative -> Credit (OUT)
+                if(correctedAmount > 0) {
+                    debit = correctedAmount.toFixed(2);
+                    dailyTotalDebits += correctedAmount;
                 } else {
-                    credit = Math.abs(entryAmount).toFixed(2);
-                    dailyTotalCredits += Math.abs(entryAmount);
+                    credit = Math.abs(correctedAmount).toFixed(2);
+                    dailyTotalCredits += Math.abs(correctedAmount);
                 }
                 
-                runningCashBalance += entryAmount;
+                runningCashBalance += correctedAmount;
 
                 // Use formatLedgerDate helper for date display
                 const formattedDate = formatLedgerDate(entry.date);
@@ -1444,8 +1445,8 @@ async function loadBankLedger(date = null) {
                 return false;
             })
             .forEach((t) => {
-                // Rely solely on the stored sign of t.amount (Positive = Inflow/Debit)
-                openingBankBalance += parseFloat(t.amount || 0);
+                // Use the new helper function to get the correctly signed ledger amount
+                openingBankBalance += getLedgerAmount(t);
             });
 
         // 2. Filter entries ON the selected date.
@@ -1482,21 +1483,22 @@ async function loadBankLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No bank transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                const entryAmount = parseFloat(entry.amount || 0);
+                // Use the new helper function for the correct sign
+                const correctedAmount = getLedgerAmount(entry);
 
                 let debit = ""; 
                 let credit = ""; 
                 
-                // If amount is positive -> Debit (IN); if negative -> Credit (OUT)
-                if(entryAmount > 0) {
-                    debit = entryAmount.toFixed(2);
-                    dailyTotalDebits += entryAmount;
+                // If corrected amount is positive -> Debit (IN); if negative -> Credit (OUT)
+                if(correctedAmount > 0) {
+                    debit = correctedAmount.toFixed(2);
+                    dailyTotalDebits += correctedAmount;
                 } else {
-                    credit = Math.abs(entryAmount).toFixed(2);
-                    dailyTotalCredits += Math.abs(entryAmount);
+                    credit = Math.abs(correctedAmount).toFixed(2);
+                    dailyTotalCredits += Math.abs(correctedAmount);
                 }
                 
-                runningBankBalance += entryAmount;
+                runningBankBalance += correctedAmount;
 
                 let displayName = "N/A (Business Internal)";
                 if (entry.user_id) {
@@ -2568,6 +2570,26 @@ async function exportCustomerSummary() {
         console.error("Error during customer summary export:", error);
         alert(`Failed to export customer summary: ${error.message}`);
     }
+}
+function getLedgerAmount(tx) {
+    let amount = parseFloat(tx.amount || 0);
+    if (amount === 0) return 0;
+    
+    const catInfo = transactionCategories.find(c => c.name === tx.category);
+
+    // Core Fix: Customer transactions (which track AR) store payments/refunds as negative/positive for AR.
+    // For Cash/Bank ledger, we must flip the sign to correctly reflect cash/bank inflow/outflow.
+    if (tx.user_id && catInfo && catInfo.relevantTo === 'customer' && 
+        (catInfo.affectsLedger.includes("cash") || catInfo.affectsLedger.includes("bank")) &&
+        // Exclude Opening Balance Adjustment, as it is signed correctly to initialize AR.
+        tx.category !== "Opening Balance Adjustment") { 
+        
+        return -amount;
+    }
+    
+    // For all other categories (Lenders, internal ops, Opening Balances for Cash/Bank) 
+    // the stored sign (positive=inflow, negative=outflow) is already correct.
+    return amount;
 }
 async function loadSupplierSummaries() {
     const supplierTableBody = document.getElementById("supplierTableBody");
