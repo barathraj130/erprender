@@ -210,18 +210,15 @@ router.put('/:id', async (req, res) => {
         }
 
         // 2. Fetch the target ledger ID using the OLD username (safer lookup method)
-        // This query finds the ID of the ledger we intend to update.
         const ledgerIdRows = await client.query("SELECT id FROM ledgers WHERE name = $1 AND company_id = $2", [oldUsername, companyId]);
         const ledgerId = ledgerIdRows.rows[0]?.id;
         
         if (!ledgerId) {
-            // Should not happen if creation was successful
             await client.query("ROLLBACK");
             return res.status(500).json({ error: "Critical Error: Could not find associated accounting ledger." });
         }
         
-        // 3. Update Ledger details, including name if changing (using Ledger ID in WHERE clause)
-        // This query is safe because we are using the stable internal ID for the WHERE clause.
+        // 3. Update Ledger details, including name (using Ledger ID in WHERE clause)
         const ledgerUpdateSql = `UPDATE ledgers SET 
             name = $1, opening_balance = $2, is_dr = $3, gstin = $4, state = $5 
             WHERE id = $6 AND company_id = $7`;
