@@ -1,3 +1,4 @@
+// routes/partyRoutes.js
 const express = require('express');
 const router = express.Router();
 // --- PG FIX: Import pool ---
@@ -167,7 +168,7 @@ router.put('/:id', async (req, res) => {
 
         const nameIsChanging = (oldUsername !== username);
         
-        // --- Pre-validation for Conflicts ---
+        // --- Pre-validation for Conflicts (Only necessary if name is changing) ---
         if (nameIsChanging) {
             // Check 1A: Global user conflict (users.username UNIQUE)
             const duplicateUserCheckSql = "SELECT id FROM users WHERE username = $1 AND id != $2";
@@ -177,17 +178,17 @@ router.put('/:id', async (req, res) => {
             }
             
             // Check 1B: Local ledger conflict (ledgers.name UNIQUE within company_id)
-            // Check if a ledger already exists with the NEW username AND is not the ledger currently holding the OLD username.
-            // If the name is changed, this query ensures the new name doesn't conflict with another existing ledger.
             const conflictingLedgerSql = `
                 SELECT id 
                 FROM ledgers 
-                WHERE name = $1 AND company_id = $2 
-                  AND name != $3
+                WHERE name = $1 AND company_id = $2
             `;
-            const conflictingLedger = await dbQuery(conflictingLedgerSql, [username, companyId, oldUsername]);
+            const conflictingLedger = await dbQuery(conflictingLedgerSql, [username, companyId]);
 
             if (conflictingLedger.length > 0) {
+                // If a ledger exists with the new name, check if it's the *same* ledger ID or a different one.
+                // Since `ledgers.name` is unique per company, finding a row here means conflict, unless the ledger's name
+                // has been changed outside of this user's context (which shouldn't happen, but is checked by the unique constraint).
                 return res.status(400).json({ error: "An accounting ledger with this name already exists in your company. Please choose a different party name." });
             }
         }
@@ -195,7 +196,7 @@ router.put('/:id', async (req, res) => {
         client = await pool.connect();
         await client.query("BEGIN");
         
-        // 1. Update User (Even if the name didn't change, we update other user details)
+        // 1. Update User (Regardless of name change)
         const userUpdateSql = `UPDATE users SET 
             username = $1, email = $2, phone = $3, company = $4, initial_balance = $5, role = $6, 
             address_line1 = $7, address_line2 = $8, city_pincode = $9, state = $10, gstin = $11, state_code = $12
@@ -217,7 +218,8 @@ router.put('/:id', async (req, res) => {
             await client.query(ledgerUpdateSql, [username, oldUsername, companyId]);
         }
         
-        // 3. Update Ledger opening balance, is_dr status, etc.
+        // 3. Update Ledger opening balance, is_dr status, and address details.
+        // We use the new (or unchanged) username to find the ledger.
         const ledgerUpdateDetailsSql = `UPDATE ledgers SET opening_balance = $1, is_dr = $2, gstin = $3, state = $4 
                                         WHERE name = $5 AND company_id = $6`;
         const isDr = initialBalanceFloat >= 0;
@@ -232,15 +234,15 @@ router.put('/:id', async (req, res) => {
         
         // Catch PostgreSQL unique constraint violation
         if (err.code === '23505') { 
-            errorMsg = "A user or ledger with that name already exists in your company. Please ensure there are no duplicate accounts/parties with this name.";
+            let constraintErrorMsg = "A user or ledger with that name already exists in your company. Please ensure there are no duplicate accounts/parties with this name.";
             
             if (err.constraint && err.constraint.includes('users_username_key')) {
-                 errorMsg = "This username is already taken by another user (globally). Please choose a unique name.";
+                 constraintErrorMsg = "This username is already taken by another user (globally). Please choose a unique name.";
             } else if (err.constraint && err.constraint.includes('ledgers_company_id_name_key')) {
-                 errorMsg = "An accounting ledger with this name already exists in your company.";
+                 constraintErrorMsg = "An accounting ledger with this name already exists in your company.";
             } 
             
-            return res.status(400).json({ error: "Failed to update user: " + errorMsg, details: err.message });
+            return res.status(400).json({ error: "Failed to update user: " + constraintErrorMsg, details: err.message });
         }
         
         console.error("PG PUT User/Party Error:", errorMsg, err.stack);
