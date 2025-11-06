@@ -1,4 +1,3 @@
-// routes/partyRoutes.js
 const express = require('express');
 const router = express.Router();
 // --- PG FIX: Import pool ---
@@ -168,7 +167,7 @@ router.put('/:id', async (req, res) => {
 
         const nameIsChanging = (oldUsername !== username);
         
-        // --- Pre-validation for Conflicts (Only necessary if name is changing) ---
+        // --- Pre-validation for Conflicts (Only runs if name is changing) ---
         if (nameIsChanging) {
             // Check 1A: Global user conflict (users.username UNIQUE)
             const duplicateUserCheckSql = "SELECT id FROM users WHERE username = $1 AND id != $2";
@@ -186,9 +185,6 @@ router.put('/:id', async (req, res) => {
             const conflictingLedger = await dbQuery(conflictingLedgerSql, [username, companyId]);
 
             if (conflictingLedger.length > 0) {
-                // If a ledger exists with the new name, check if it's the *same* ledger ID or a different one.
-                // Since `ledgers.name` is unique per company, finding a row here means conflict, unless the ledger's name
-                // has been changed outside of this user's context (which shouldn't happen, but is checked by the unique constraint).
                 return res.status(400).json({ error: "An accounting ledger with this name already exists in your company. Please choose a different party name." });
             }
         }
@@ -214,12 +210,14 @@ router.put('/:id', async (req, res) => {
 
         // 2. Update Ledger name if username changed
         if (nameIsChanging) {
-            const ledgerUpdateSql = `UPDATE ledgers SET name = $1 WHERE name = $2 AND company_id = $3`;
-            await client.query(ledgerUpdateSql, [username, oldUsername, companyId]);
+            // Use oldUsername in WHERE clause to find the specific ledger row, 
+            // then update its name to the new username.
+            const ledgerUpdateNameSql = `UPDATE ledgers SET name = $1 WHERE name = $2 AND company_id = $3`;
+            await client.query(ledgerUpdateNameSql, [username, oldUsername, companyId]);
         }
         
-        // 3. Update Ledger opening balance, is_dr status, and address details.
-        // We use the new (or unchanged) username to find the ledger.
+        // 3. Update Ledger details (opening balance, gstin, state)
+        // We use the new (or unchanged) username in the WHERE clause here.
         const ledgerUpdateDetailsSql = `UPDATE ledgers SET opening_balance = $1, is_dr = $2, gstin = $3, state = $4 
                                         WHERE name = $5 AND company_id = $6`;
         const isDr = initialBalanceFloat >= 0;
