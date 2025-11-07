@@ -4662,7 +4662,6 @@ async function printCurrentInvoice() {
         alert("Please save the invoice first or ensure an invoice is loaded in the modal to print.");
     }
 }
-
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     try {
         const [invoiceRes, companyProfile] = await Promise.all([
@@ -4687,7 +4686,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         printWindow.document.write(`
             <style>
-                body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; } /* Adjusted font size for print density */
+                body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; } 
                 @page { size: A4; margin: 0; }
                 .print-container { width: 210mm; height: 297mm; padding: 5mm; box-sizing: border-box; }
                 .invoice-box { border: 1px solid #000; padding: 2mm; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
@@ -4698,48 +4697,36 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .text-center { text-align: center; } .text-right { text-align: right; } .font-bold { font-weight: bold; }
                 .company-name { font-size: 16pt; font-weight: bold; }
                 .invoice-title { font-size: 14pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1.5mm 0; margin: 2mm 0; }
-                .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; } /* Adjusted font size */
+                .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; } 
                 .label { font-weight: bold; }
                 .address-grid { margin-top: 2mm; border-top: 1px solid #000; border-bottom: 1px solid #000; }
                 .address-grid td { width: 50%; padding: 2mm; vertical-align: top; }
                 .address-grid td:first-child { border-right: 1px solid #000; }
                 .address-title { text-decoration: underline; font-weight: bold; margin-bottom: 1mm; display: block; }
                 .items-table { width: 100%; border-collapse: collapse; }
-                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 1.5mm; word-wrap: break-word; } /* Adjusted font size */
+                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 1.5mm; word-wrap: break-word; } 
                 .items-table thead th { background-color: #f2f2f2; }
                 .items-table tfoot td { font-weight: bold; }
                 .footer-section { padding-top: 2mm; }
-                .totals-summary { width: 50%; float: right; }
+                .totals-summary { width: 100%; } /* Make totals summary table fill its parent td */
                 .totals-summary td { padding: 1mm 2mm; }
                 .grand-total td { font-weight: bold; border-top: 1px solid #000; }
                 
                 /* --- FIX for signature/seal margin lines --- */
-                .final-footer-container { 
-                    border-top: 1px solid #000; /* Add border above footer area */
-                    padding-top: 2mm;
-                    padding-bottom: 2mm;
+                .final-footer-area { 
+                    display: flex;
+                    border-top: 1px solid #000;
                 }
-
-                .final-footer { 
-                    display: flex; 
-                    justify-content: space-between; 
-                    align-items: flex-end; 
-                    width: 100%; 
-                    height: 35mm; /* Give explicit height for signature area */
+                .footer-col { 
+                    width: 50%; 
+                    padding: 2mm; 
+                    box-sizing: border-box;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
                 }
-                .signature { 
-                    text-align: right;
-                    border-left: 1px solid #000; 
-                    padding-left: 10mm;
-                    width: 50%;
-                }
-                .common-seal {
-                    border-right: 1px solid #000; 
-                    padding-right: 10mm;
-                    width: 50%;
-                    text-align: left;
-                }
-                /* --- END FIX --- */
+                .footer-col-left { border-right: 1px solid #000; }
+                .signature-box { height: 30mm; text-align: right; }
             </style>
         `);
 
@@ -4784,7 +4771,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                         <span class="address-title">Details of Consignee/Shipped To:</span>
                         <div class="font-bold">${invoiceData.consignee_name}</div>
                         <div>${invoiceData.consignee_address_line1 || ''}<br>${invoiceData.consignee_city_pincode || ''}</div>
-                        <div><span class="label">PH:</span> ${invoiceData.consignee_phone || invoiceData.customer_phone || ''}</div> <!-- Includes Phone from customer data -->
+                        <div><span class="label">PH:</span> ${invoiceData.consignee_phone || invoiceData.customer_phone || ''}</div>
                         <div><span class="label">GSTIN:</span> ${invoiceData.consignee_gstin || 'N/A'}</div>
                         <div><span class="label">State:</span> ${invoiceData.consignee_state || ''}, <span class="label">Code:</span> ${invoiceData.consignee_state_code || ''}</div>
                     </td>
@@ -4844,33 +4831,38 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         
         let footerHtml = `
             <div class="footer-section">
-                <table>
-                    <tr>
-                        <td style="width: 50%; vertical-align: top; border-right: 1px solid #000;">
+                
+                <!-- START: Footer Split into two columns without an outer table -->
+                <div class="final-footer-area">
+                    
+                    <div class="footer-col footer-col-left">
+                        <div>
                             <div><span class="label">Total Amount in words:</span> <span class="font-bold" style="text-transform: uppercase;">${invoiceData.amount_in_words || convertAmountToWords(grandTotal) + ' RUPEES ONLY'}</span></div>
                             <div style="margin-top: 5px;"><span class="label">Bundles:</span> <span class="font-bold">${invoiceData.bundles_count || 'N/A'}</span></div>
-                            <div style="margin-top: 10px;">
-                                <span class="label" style="text-decoration: underline;">Bank Details:</span>
-                                <div><span class="label">BANK NAME:</span> ${companyProfile.bank_name}</div>
-                                <div><span class="label">A/C NO:</span> ${companyProfile.bank_account_no}</div>
-                                <div><span class="label">IFSC NO:</span> ${companyProfile.bank_ifsc_code}</div>
-                            </div>
-                        </td>
-                        <td style="width: 50%; vertical-align: top;">
-                            <table class="totals-summary">
-                                <tr><td>Total Amount Before Tax</td><td class="text-right">${totalTaxable.toFixed(2)}</td></tr>
-                                <tr><td>Add: CGST</td><td class="text-right">${totalCgst.toFixed(2)}</td></tr>
-                                <tr><td>Add: SGST</td><td class="text-right">${totalSgst.toFixed(2)}</td></tr>
-                                <tr><td>Add: IGST</td><td class="text-right">${totalIgst.toFixed(2)}</td></tr>
-                                <tr class="grand-total"><td>Total Amount After Tax</td><td class="text-right">${grandTotal.toFixed(2)}</td></tr>
-                            </table>
-                        </td>
-                    </tr>
-                </table>
-                
-                <!-- NEW CONTAINER FOR SIGNATURE AREA -->
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <span class="label" style="text-decoration: underline;">Bank Details:</span>
+                            <div><span class="label">BANK NAME:</span> ${companyProfile.bank_name}</div>
+                            <div><span class="label">A/C NO:</span> ${companyProfile.bank_account_no}</div>
+                            <div><span class="label">IFSC NO:</span> ${companyProfile.bank_ifsc_code}</div>
+                        </div>
+                    </div>
+
+                    <div class="footer-col">
+                        <table class="totals-summary">
+                            <tr><td>Total Amount Before Tax</td><td class="text-right">${totalTaxable.toFixed(2)}</td></tr>
+                            <tr><td>Add: CGST</td><td class="text-right">${totalCgst.toFixed(2)}</td></tr>
+                            <tr><td>Add: SGST</td><td class="text-right">${totalSgst.toFixed(2)}</td></tr>
+                            <tr><td>Add: IGST</td><td class="text-right">${totalIgst.toFixed(2)}</td></tr>
+                            <tr class="grand-total"><td>Total Amount After Tax</td><td class="text-right">${grandTotal.toFixed(2)}</td></tr>
+                        </table>
+                    </div>
+                </div>
+                <!-- END: Footer Split -->
+
+                <!-- SIGNATURE AREA -->
                 <div class="final-footer-container">
-                    <span class="label">GST Payable on Reverse Charge:</span> ${invoiceData.reverse_charge || 'No'}
+                    <span class="label" style="display: block; margin-bottom: 1mm;">GST Payable on Reverse Charge:</span> ${invoiceData.reverse_charge || 'No'}
                     <div class="final-footer">
                         <div class="common-seal">
                             (Common Seal)
