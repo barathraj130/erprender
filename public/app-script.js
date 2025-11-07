@@ -2443,8 +2443,10 @@ async function deleteLender(id) {
 }
 async function loadCustomerSummaries() {
     const customerTableBody = document.getElementById("customerTableBody");
-    if (!customerTableBody) {
-        console.error("Customer summary table body not found in the DOM.");
+    const totalReceivableElement = document.getElementById("totalReceivableAmount"); // Element added in dashboard.html
+
+    if (!customerTableBody || !totalReceivableElement) {
+        console.error("Customer summary table body or total receivable element not found in the DOM.");
         return;
     }
     customerTableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;">Loading customer data...</td></tr>';
@@ -2461,14 +2463,16 @@ async function loadCustomerSummaries() {
 
         if (!Array.isArray(customersOnly) || customersOnly.length === 0) {
             customerTableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No customers found.</td></tr>';
+            totalReceivableElement.textContent = '₹0.00'; // Reset total
             return;
         }
 
         let serialNumber = 1;
+        let grandTotalReceivable = 0; // Initialize the grand total
 
         customersOnly.forEach((user) => {
             
-            // --- START FIX: Calculate Receivable by correcting bad transaction data ---
+            // --- START Receivable Calculation for THIS user ---
             let receivable = parseFloat(user.initial_balance || 0);
             let loanOutstanding = 0;
             let chitNetPosition = 0;
@@ -2481,12 +2485,11 @@ async function loadCustomerSummaries() {
                 let correctedAmount = rawAmount; 
                 
                 // *** CORRECTION LOGIC ***
-                // Apply the same retroactive correction as in the modal display:
+                // Payments received by the business are stored as POSITIVE amounts in the transaction table 
+                // but must be treated as negative (a credit) when calculating AR (receivable)
                 if (categoryInfo && categoryInfo.group === 'customer_payment' && rawAmount > 0) {
                     correctedAmount = -rawAmount; // Flip positive payments to negative (Credit)
                 }
-                // Note: Opening Balance Adjustment (if present) is intentionally not flipped here
-                // because it's assumed to be pre-signed correctly during onboarding.
                 // *** END CORRECTION ***
 
                 if (categoryInfo) {
@@ -2500,7 +2503,10 @@ async function loadCustomerSummaries() {
                 // Add the corrected amount to the receivable balance
                 receivable += correctedAmount;
             });
-            // --- END FIX ---
+            // --- END Receivable Calculation for THIS user ---
+            
+            // Add to the grand total (includes payables/negative AR for a net view)
+            grandTotalReceivable += receivable;
 
 
             const row = customerTableBody.insertRow();
@@ -2511,6 +2517,7 @@ async function loadCustomerSummaries() {
             
             const receivableCell = row.insertCell();
             receivableCell.textContent = receivable.toFixed(2); // Use the newly calculated 'receivable'
+            // receivable > 0 means customer owes us (Debit balance, bad for customer, negative AR balance)
             receivableCell.className = receivable > 0 ? "negative-balance num" : receivable < 0 ? "positive-balance num" : "num";
             
             const loanCell = row.insertCell();
@@ -2521,7 +2528,7 @@ async function loadCustomerSummaries() {
             chitCell.textContent = chitNetPosition.toFixed(2);
             chitCell.className = chitNetPosition >= 0 ? "negative-balance num" : "positive-balance num";
             
-            // FIX APPLIED HERE: Use formatLedgerDate
+            // Use formatLedgerDate
             row.insertCell().textContent = formatLedgerDate(user.created_at);
             
             const actionsCell = row.insertCell();
@@ -2537,12 +2544,16 @@ async function loadCustomerSummaries() {
                 </button>
             `;
         });
+        
+        // Update the grand total display element
+        totalReceivableElement.textContent = `₹${grandTotalReceivable.toFixed(2)}`;
 
     } catch (error) {
         console.error("Error loading customer summaries:", error);
         if (customerTableBody) {
             customerTableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:red;">Error: ${error.message}</td></tr>`;
         }
+        totalReceivableElement.textContent = 'ERROR';
     }
 }
 async function exportCustomerSummary() {
