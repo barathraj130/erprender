@@ -16,19 +16,51 @@ async function dbQuery(sql, params = []) {
     }
 }
 
-// CSV Convert Helper
-function convertToCsv(data, headers) {
+// CSV Convert Helper (Updated to include footer)
+function convertToCsv(data, headers, footerData = null) {
     if (!Array.isArray(data) || data.length === 0) return '';
 
     const sanitize = (v) => {
         if (v === null || v === undefined) return '';
         const s = String(v);
-        return s.includes(',') ? `"${s.replace(/"/g, '""')}"` : s;
+        // Ensure numbers are formatted without commas for clean CSV parsing
+        if (typeof v === 'number') {
+            return s; 
+        }
+        // Handle strings that contain commas, newlines, or quotes by wrapping them in double quotes
+        return s.includes(',') || s.includes('\n') || s.includes('"') 
+            ? `"${s.replace(/"/g, '""')}"` 
+            : s;
     };
 
+    // 1. Generate Header Row
     const headerRow = headers.map(h => sanitize(h.label)).join(',');
+    
+    // 2. Generate Data Rows
     const rows = data.map(row => headers.map(h => sanitize(row[h.key])).join(','));
-    return [headerRow, ...rows].join('\n');
+    
+    let csvContent = [headerRow, ...rows].join('\n');
+
+    // 3. Append Footer Row (Grand Total)
+    if (footerData && headers.length >= 1) {
+        
+        // Start the footer row with a label 'TOTAL' in the first column
+        const totalRow = ['TOTAL'];
+        
+        // Pad empty columns if there are intermediate columns. 
+        // We subtract 2 because we account for the first (label) and the last (amount).
+        for (let i = 1; i < headers.length - 1; i++) {
+            totalRow.push('');
+        }
+        
+        // Add the total amount (which is expected to be available in footerData.total_amount) 
+        // to the last column.
+        totalRow.push(sanitize(footerData.total_amount));
+        
+        csvContent += '\n' + totalRow.join(',');
+    }
+
+    return csvContent;
 }
 
 // Helper to calculate Receivable balance for a user (based on Ledger logic)
@@ -41,6 +73,7 @@ async function calculateReceivable(userId, companyId) {
     let receivable = parseFloat(user.initial_balance || 0);
 
     // 2. Sum of all transactions associated with this user
+    // NOTE: Transaction amounts are already stored signed (+ve = increase AR, -ve = decrease AR)
     const txRows = await dbQuery(`
         SELECT COALESCE(SUM(amount), 0) AS total_amount_change
         FROM transactions 
@@ -118,9 +151,14 @@ router.get('/export/customer-summary', async (req, res) => {
             ORDER BY username ASC
         `, [companyId]);
 
+        let grandTotal = 0;
+        
         const exportDataPromises = userRows.map(async (user) => {
             // Calculate the final receivable balance for each user
             const finalReceivable = await calculateReceivable(user.id, companyId);
+            
+            // Accumulate the grand total
+            grandTotal += finalReceivable; 
             
             return {
                 "PARTY NAME": user.username,
@@ -130,13 +168,19 @@ router.get('/export/customer-summary', async (req, res) => {
 
         const data = await Promise.all(exportDataPromises);
         
-        // Convert to CSV
+        // Define headers (must match keys used in exportDataPromises)
         const headers = [
             { key: "PARTY NAME", label: "PARTY NAME" },
             { key: "AMOUNT", label: "AMOUNT" }
         ];
+        
+        // Define footer data
+        const footer = {
+            total_amount: grandTotal.toFixed(2)
+        };
 
-        const csv = convertToCsv(data, headers);
+        // Convert to CSV, passing the footer data
+        const csv = convertToCsv(data, headers, footer);
 
         res.setHeader("Content-Disposition", "attachment; filename=Customer_Receivable_Summary.csv");
         res.set("Content-Type", "text/csv");
@@ -257,6 +301,10 @@ router.post('/', async (req, res) => {
         res.json({ message: "Customer created successfully." });
     } catch (err) {
         await client.query("ROLLBACK");
+        // Improved error handling for unique constraint violations
+        if (err.code === '23505') {
+            return res.status(400).json({ error: `A customer or user with this name/email already exists.` });
+        }
         res.status(400).json({ error: err.message });
     } finally {
         client.release();
@@ -287,11 +335,17 @@ router.put('/:id', async (req, res) => {
         await client.query("BEGIN");
 
         if (nameChanged) {
-            const dupUser = await dbQuery("SELECT 1 FROM users WHERE username=$1 AND id != $2", [username, id]);
-            if (dupUser.length) return res.status(400).json({ error: "Another customer has this name." });
+            const dupUser = await client.query("SELECT 1 FROM users WHERE username=$1 AND id != $2", [username, id]);
+            if (dupUser.rows.length) {
+                await client.query("ROLLBACK");
+                return res.status(400).json({ error: "Another customer has this name." });
+            }
 
-            const dupLedger = await dbQuery("SELECT 1 FROM ledgers WHERE name=$1 AND company_id=$2", [username, companyId]);
-            if (dupLedger.length) return res.status(400).json({ error: "Ledger name already exists." });
+            const dupLedger = await client.query("SELECT 1 FROM ledgers WHERE name=$1 AND company_id=$2", [username, companyId]);
+            if (dupLedger.rows.length) {
+                await client.query("ROLLBACK");
+                return res.status(400).json({ error: "A ledger with this name already exists." });
+            }
         }
 
         await client.query(`
@@ -301,8 +355,8 @@ router.put('/:id', async (req, res) => {
         `, [username, finalEmail, phone, company, newBalance, finalRole,
             address_line1, address_line2, city_pincode, state, gstin, state_code, id]);
 
-        const ledger = await dbQuery(`SELECT id FROM ledgers WHERE name=$1 AND company_id=$2`, [existing.username, companyId]);
-        const ledgerId = ledger[0].id;
+        const ledger = await client.query(`SELECT id FROM ledgers WHERE name=$1 AND company_id=$2`, [existing.username, companyId]);
+        const ledgerId = ledger.rows[0].id;
 
         if (nameChanged) {
             await client.query(`
@@ -321,6 +375,9 @@ router.put('/:id', async (req, res) => {
 
     } catch (err) {
         await client.query("ROLLBACK");
+        if (err.code === '23505') {
+            return res.status(400).json({ error: `A customer or user with this email/GSTIN already exists.` });
+        }
         return res.status(400).json({ error: err.message });
     } finally {
         client.release();
@@ -331,21 +388,46 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     const { id } = req.params;
     const companyId = req.user.active_company_id;
+    let client;
 
-    const ledger = await dbQuery(`
-        SELECT ledgers.id FROM ledgers 
-        JOIN users ON ledgers.name = users.username 
-        WHERE users.id=$1 AND ledgers.company_id=$2
-    `, [id, companyId]);
+    try {
+        client = await pool.connect();
+        await client.query("BEGIN");
+        
+        // 1. Get user and check for associated ledger
+        const userRows = await client.query('SELECT username FROM users WHERE id = $1', [id]);
+        if (userRows.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ message: "Customer not found." });
+        }
+        const ledgerNameToDelete = userRows.rows[0].username;
 
-    await dbQuery(`DELETE FROM user_companies WHERE user_id=$1 AND company_id=$2`, [id, companyId]);
-    await dbQuery(`DELETE FROM users WHERE id=$1`, [id]);
+        // 2. Check for related transactions (prevent deletion if heavily used)
+        const txCountRows = await client.query(`SELECT COUNT(*) FROM transactions WHERE user_id = $1`, [id]);
+        if (parseInt(txCountRows.rows[0].count) > 0) {
+             await client.query("ROLLBACK");
+             return res.status(400).json({ error: "Cannot delete customer. Existing transactions are linked. Please contact support or manually reverse transactions." });
+        }
 
-    if (ledger.length) {
-        await dbQuery(`DELETE FROM ledgers WHERE id=$1`, [ledger[0].id]);
+        // 3. Delete user association and user (user_companies is CASCADE deleted)
+        await client.query(`DELETE FROM user_companies WHERE user_id=$1 AND company_id=$2`, [id, companyId]);
+        const userDeleteResult = await client.query(`DELETE FROM users WHERE id=$1`, [id]);
+
+        // 4. Delete associated Ledger
+        if (userDeleteResult.rowCount > 0) {
+            await client.query(`DELETE FROM ledgers WHERE name=$1 AND company_id=$2`, [ledgerNameToDelete, companyId]);
+        }
+
+        await client.query("COMMIT");
+        res.json({ message: "Customer and associated ledger deleted." });
+        
+    } catch (err) {
+        if (client) await client.query("ROLLBACK");
+        console.error("Error deleting customer:", err.message);
+        return res.status(500).json({ error: "Failed to delete customer.", details: err.message });
+    } finally {
+        if (client) client.release();
     }
-
-    res.json({ message: "Customer deleted." });
 });
 
 module.exports = router;
