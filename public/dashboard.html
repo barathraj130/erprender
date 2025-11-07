@@ -1,5 +1,3 @@
---- START OF FILE dashboard.html ---
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -175,12 +173,10 @@
             <div class="section-header">
                 <h2>Customer Management</h2>
                 <div>
-                    <!-- NEW DISPLAY ADDED HERE -->
+                    <!-- DISPLAY TOTAL RECEIVABLE (Added in previous step) -->
                     <span class="total-receivable-display" style="font-size: 1.1em; font-weight: 600;">
                         Total Receivable: <strong id="totalReceivableAmount">₹0.00</strong>
                     </span>
-                    <!-- END NEW DISPLAY -->
-                    
                     <!-- NEW EXPORT BUTTON -->
                     <button class="btn btn-secondary" onclick="exportCustomerSummary()"><i class="fas fa-file-export"></i> Export Receivable Summary</button>
                     <button class="btn btn-primary" onclick="openUserModal()"><i class="fas fa-plus"></i> Add New Customer</button>
@@ -204,7 +200,6 @@
                 </table>
             </div>
         </section>
-    
         <!-- Supplier Management Section -->
         <section id="supplierManagementSection" class="app-section" style="display: none;">
             <div class="section-header">
