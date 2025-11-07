@@ -4711,8 +4711,34 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .totals-summary { width: 50%; float: right; }
                 .totals-summary td { padding: 1mm 2mm; }
                 .grand-total td { font-weight: bold; border-top: 1px solid #000; }
-                .final-footer { display: flex; justify-content: space-between; align-items: flex-end; width: 100%; padding-top: 10mm; }
-                .signature { text-align: right; }
+                
+                /* --- FIX for signature/seal margin lines --- */
+                .final-footer-container { 
+                    border-top: 1px solid #000; /* Add border above footer area */
+                    padding-top: 2mm;
+                    padding-bottom: 2mm;
+                }
+
+                .final-footer { 
+                    display: flex; 
+                    justify-content: space-between; 
+                    align-items: flex-end; 
+                    width: 100%; 
+                    height: 35mm; /* Give explicit height for signature area */
+                }
+                .signature { 
+                    text-align: right;
+                    border-left: 1px solid #000; 
+                    padding-left: 10mm;
+                    width: 50%;
+                }
+                .common-seal {
+                    border-right: 1px solid #000; 
+                    padding-right: 10mm;
+                    width: 50%;
+                    text-align: left;
+                }
+                /* --- END FIX --- */
             </style>
         `);
 
@@ -4802,7 +4828,6 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
 
         // Add empty rows to ensure the minimum number of lines
         for (let i = 0; i < emptyRowsNeeded; i++) {
-            // Using a specific height to help control table layout
             itemsHtml += `<tr><td style="height:1.5em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
         }
         // --- END FIX ---
@@ -4820,7 +4845,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             <div class="footer-section">
                 <table>
                     <tr>
-                        <td style="width: 50%; vertical-align: top;">
+                        <td style="width: 50%; vertical-align: top; border-right: 1px solid #000;">
                             <div><span class="label">Total Amount in words:</span> <span class="font-bold" style="text-transform: uppercase;">${invoiceData.amount_in_words || convertAmountToWords(grandTotal) + ' RUPEES ONLY'}</span></div>
                             <div style="margin-top: 5px;"><span class="label">Bundles:</span> <span class="font-bold">${invoiceData.bundles_count || 'N/A'}</span></div>
                             <div style="margin-top: 10px;">
@@ -4840,14 +4865,20 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                             </table>
                         </td>
                     </tr>
-                    <tr><td colspan="2" style="padding-top: 5mm;"><span class="label">GST Payable on Reverse Charge:</span> ${invoiceData.reverse_charge || 'No'}</td></tr>
                 </table>
-                <div class="final-footer">
-                    <div>(Common Seal)</div>
-                    <div class="signature">
-                        <div>Certified that the particulars given above are true & correct.</div>
-                        <div style="margin-top:15mm;" class="font-bold">For, ${companyProfile.company_name}</div>
-                        <div style="margin-top:2mm;">Authorised Signatory</div>
+                
+                <!-- NEW CONTAINER FOR SIGNATURE AREA -->
+                <div class="final-footer-container">
+                    <span class="label">GST Payable on Reverse Charge:</span> ${invoiceData.reverse_charge || 'No'}
+                    <div class="final-footer">
+                        <div class="common-seal">
+                            (Common Seal)
+                        </div>
+                        <div class="signature">
+                            <div>Certified that the particulars given above are true & correct.</div>
+                            <div style="margin-top:15mm;" class="font-bold">For, ${companyProfile.company_name}</div>
+                            <div style="margin-top:2mm;">Authorised Signatory</div>
+                        </div>
                     </div>
                 </div>
             </div>`;
