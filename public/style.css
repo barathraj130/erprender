@@ -860,6 +860,15 @@ body {
         margin: 0 !important;
         padding: 0 !important;
         background: #fff;
+        /* NEW: Apply a compact base print font size */
+        font-size: 9pt; 
+    }
+    
+    /* NEW: Adjust size of the primary invoice container for A4 fit */
+    .print-container {
+        width: 100% !important; 
+        max-height: 297mm !important; /* A4 height */
+        box-sizing: border-box;
     }
 
     @page {

@@ -4686,7 +4686,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         printWindow.document.write(`
             <style>
-                body { font-family: "Arial", sans-serif; font-size: 9pt; margin: 0; color: #000; }
+                body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; } /* Adjusted font size for print density */
                 @page { size: A4; margin: 0; }
                 .print-container { width: 210mm; height: 297mm; padding: 5mm; box-sizing: border-box; }
                 .invoice-box { border: 1px solid #000; padding: 2mm; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
@@ -4697,14 +4697,14 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .text-center { text-align: center; } .text-right { text-align: right; } .font-bold { font-weight: bold; }
                 .company-name { font-size: 16pt; font-weight: bold; }
                 .invoice-title { font-size: 14pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1.5mm 0; margin: 2mm 0; }
-                .details-table td { padding: 0.5mm 1mm; font-size: 9pt; }
+                .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; } /* Adjusted font size */
                 .label { font-weight: bold; }
                 .address-grid { margin-top: 2mm; border-top: 1px solid #000; border-bottom: 1px solid #000; }
                 .address-grid td { width: 50%; padding: 2mm; vertical-align: top; }
                 .address-grid td:first-child { border-right: 1px solid #000; }
                 .address-title { text-decoration: underline; font-weight: bold; margin-bottom: 1mm; display: block; }
                 .items-table { width: 100%; border-collapse: collapse; }
-                .items-table th, .items-table td { border: 1px solid #000; font-size: 9pt; padding: 1.5mm; word-wrap: break-word; }
+                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 1.5mm; word-wrap: break-word; } /* Adjusted font size */
                 .items-table thead th { background-color: #f2f2f2; }
                 .items-table tfoot td { font-weight: bold; }
                 .footer-section { padding-top: 2mm; }
@@ -4757,7 +4757,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                         <span class="address-title">Details of Consignee/Shipped To:</span>
                         <div class="font-bold">${invoiceData.consignee_name}</div>
                         <div>${invoiceData.consignee_address_line1 || ''}<br>${invoiceData.consignee_city_pincode || ''}</div>
-                         <div><span class="label">PH:</span> ${invoiceData.customer_phone || ''}</div>
+                        <div><span class="label">PH:</span> ${invoiceData.consignee_phone || invoiceData.customer_phone || ''}</div> <!-- Includes Phone from customer data -->
                         <div><span class="label">GSTIN:</span> ${invoiceData.consignee_gstin || 'N/A'}</div>
                         <div><span class="label">State:</span> ${invoiceData.consignee_state || ''}, <span class="label">Code:</span> ${invoiceData.consignee_state_code || ''}</div>
                     </td>
@@ -4795,9 +4795,10 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             </tr>`;
         });
         
-        for (let i = invoiceData.line_items.length; i < 15; i++) {
-             itemsHtml += `<tr><td style="height:1.5em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
-        }
+        // Removed padding rows to save space and force 1 page print
+        // for (let i = invoiceData.line_items.length; i < 15; i++) {
+        //      itemsHtml += `<tr><td style="height:1.5em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+        // }
 
         itemsHtml += `</tbody><tfoot><tr>
             <td colspan="4" class="font-bold text-right">Total</td>
@@ -4832,7 +4833,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                             </table>
                         </td>
                     </tr>
-                    <tr><td colspan="2" style="padding-top: 5mm;"><span class="label">GST Payable on Reverse Charge:</span> No</td></tr>
+                    <tr><td colspan="2" style="padding-top: 5mm;"><span class="label">GST Payable on Reverse Charge:</span> ${invoiceData.reverse_charge || 'No'}</td></tr>
                 </table>
                 <div class="final-footer">
                     <div>(Common Seal)</div>
