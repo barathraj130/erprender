@@ -4686,7 +4686,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         printWindow.document.write(`
             <style>
-                body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; } 
+                body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; } /* Adjusted font size for print density */
                 @page { size: A4; margin: 0; }
                 .print-container { width: 210mm; height: 297mm; padding: 5mm; box-sizing: border-box; }
                 .invoice-box { border: 1px solid #000; padding: 2mm; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
@@ -4697,14 +4697,14 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .text-center { text-align: center; } .text-right { text-align: right; } .font-bold { font-weight: bold; }
                 .company-name { font-size: 16pt; font-weight: bold; }
                 .invoice-title { font-size: 14pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1.5mm 0; margin: 2mm 0; }
-                .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; } 
+                .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; } /* Adjusted font size */
                 .label { font-weight: bold; }
                 .address-grid { margin-top: 2mm; border-top: 1px solid #000; border-bottom: 1px solid #000; }
                 .address-grid td { width: 50%; padding: 2mm; vertical-align: top; }
                 .address-grid td:first-child { border-right: 1px solid #000; }
                 .address-title { text-decoration: underline; font-weight: bold; margin-bottom: 1mm; display: block; }
                 .items-table { width: 100%; border-collapse: collapse; }
-                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 1.5mm; word-wrap: break-word; } 
+                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 1.5mm; word-wrap: break-word; } /* Adjusted font size */
                 .items-table thead th { background-color: #f2f2f2; }
                 .items-table tfoot td { font-weight: bold; }
                 .footer-section { padding-top: 2mm; }
@@ -4712,21 +4712,35 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .totals-summary td { padding: 1mm 2mm; }
                 .grand-total td { font-weight: bold; border-top: 1px solid #000; }
                 
-                /* --- FIX for signature/seal margin lines --- */
-                .final-footer-area { 
-                    display: flex;
-                    border-top: 1px solid #000;
+                /* --- FIX for signature/seal margin lines & alignment --- */
+                .final-footer-container { 
+                    border-top: 1px solid #000; 
+                    padding-top: 2mm;
+                    padding-bottom: 2mm;
                 }
-                .footer-col { 
-                    width: 50%; 
-                    padding: 2mm; 
-                    box-sizing: border-box;
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: space-between;
+
+                .final-footer { 
+                    display: flex; 
+                    justify-content: space-between; 
+                    width: 100%; 
+                    min-height: 30mm; /* Ensure minimum space */
+                    align-items: flex-end; /* Align contents to the very bottom */
                 }
-                .footer-col-left { border-right: 1px solid #000; }
-                .signature-box { height: 30mm; text-align: right; }
+                .signature { 
+                    /* PUSHED to the right and bottom */
+                    text-align: right;
+                    border-left: 1px solid #000; 
+                    padding-left: 10mm;
+                    width: 50%;
+                }
+                .common-seal {
+                    /* PUSHED to the left and bottom */
+                    border-right: 1px solid #000; 
+                    padding-right: 10mm;
+                    width: 50%;
+                    text-align: left;
+                }
+                /* --- END FIX --- */
             </style>
         `);
 
@@ -4891,6 +4905,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         alert("Could not prepare invoice for printing: " + error.message);
     }
 }
+
 function convertAmountToWords(amount) {
     // --- THIS IS THE KEY FIX FOR NEGATIVE NUMBERS ---
     const isNegative = amount < 0;
