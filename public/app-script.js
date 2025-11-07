@@ -4686,39 +4686,67 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         printWindow.document.write(`
             <style>
-                /* Aggressive print styling to match the condensed layout */
-                body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; }
+                /* Aggressive print styling to ensure single-page fit and density */
+                body { font-family: "Arial", sans-serif; font-size: 8pt; margin: 0; color: #000; } 
                 @page { size: A4; margin: 0; }
-                .print-container { width: 210mm; height: 297mm; padding: 5mm; box-sizing: border-box; }
+                .print-container { width: 210mm; height: 297mm; padding: 2mm; box-sizing: border-box; } /* Reduced overall padding */
                 .invoice-box { border: 1px solid #000; padding: 0mm; box-sizing: border-box; }
                 
                 /* Main structure table */
                 .main-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-                .main-print-table td, .main-print-table th { padding: 1mm 2mm; vertical-align: top; border: 1px solid #000; }
-                .main-print-table .no-border { border: none !important; padding: 0 2mm; }
+                .main-print-table td, .main-print-table th { padding: 0.5mm 1.5mm; vertical-align: top; border: 1px solid #000; } /* Reduced cell padding */
+                .main-print-table .no-border { border: none !important; padding: 0 1.5mm; }
 
                 /* Header Styling */
-                .header-text { font-size: 10pt; font-weight: bold; text-align: center; }
-                .header-subtext { font-size: 8pt; text-align: center; }
-                .invoice-title-bar { font-size: 12pt; font-weight: bold; text-align: center; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; }
+                .header-text { font-size: 9pt; font-weight: bold; text-align: center; } /* Reduced font size */
+                .header-subtext { font-size: 7.5pt; text-align: center; } /* Reduced font size */
+                .invoice-title-bar { font-size: 11pt; font-weight: bold; text-align: center; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; }
 
-                /* Detail Grid Styling (Billed To / Consignee / Invoice Info) */
+                /* Detail Grid Styling */
                 .detail-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-                .detail-grid td { padding: 0.5mm 2mm; font-size: 8pt; }
-                .detail-grid .detail-label { font-weight: bold; width: 35%; }
+                .detail-grid td { padding: 0.5mm 1.5mm; font-size: 7.5pt; } /* Reduced font size and padding */
+                .detail-grid .detail-label { font-weight: bold; width: 30%; } /* Reduced label width */
                 .detail-box-title { font-weight: bold; text-decoration: underline; margin-bottom: 0.5mm; display: block; }
                 
-                /* Items Table Styling */
+                /* Items Table Styling (Adjusted for better text alignment/density) */
                 .items-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-                .items-table th, .items-table td { border: 1px solid #000; padding: 1mm 2mm; font-size: 8pt; }
+                .items-table th, .items-table td { border: 1px solid #000; padding: 1mm 1.5mm; font-size: 7.5pt; height: 3mm; } /* Reduced padding and added fixed row height */
                 .items-table th { background-color: #f2f2f2; text-align: center; }
+                .items-table td { vertical-align: top !important; } /* Ensure product box aligns to top */
                 
                 /* Footer Styling */
                 .totals-box { width: 100%; border-collapse: collapse; table-layout: fixed; }
-                .totals-box td { padding: 0.5mm 2mm; font-size: 8.5pt; }
+                .totals-box td { padding: 0.5mm 1.5mm; font-size: 8pt; }
                 .totals-box .total-label { font-weight: bold; }
                 .totals-box .total-amount { font-weight: bold; text-align: right; }
-                .totals-box .total-final { border-top: 1px solid #000; font-size: 10pt; }
+                .totals-box .total-final { border-top: 1px solid #000; font-size: 9pt; }
+                
+                /* Signature Area Styling */
+                .final-footer-container { 
+                    border-top: 1px solid #000; 
+                    padding-top: 1mm; /* Reduced padding */
+                    padding-bottom: 1mm;
+                }
+
+                .final-footer { 
+                    display: flex; 
+                    justify-content: space-between; 
+                    width: 100%; 
+                    min-height: 25mm; /* Reduced minimum space */
+                    align-items: flex-end; 
+                }
+                .signature { 
+                    text-align: right;
+                    border-left: 1px solid #000; 
+                    padding-left: 10mm;
+                    width: 50%;
+                }
+                .common-seal {
+                    border-right: 1px solid #000; 
+                    padding-right: 10mm;
+                    width: 50%;
+                    text-align: left;
+                }
             </style>
         `);
 
@@ -4853,7 +4881,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         });
         
         for (let i = 0; i < emptyRowsNeeded; i++) {
-            mainHtml += `<tr><td style="height:1.5em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+            mainHtml += `<tr><td style="height:3mm;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`; // Using 3mm height as per item th/td height
         }
 
         // --- 6. Items Footer (Totals Row) ---
@@ -4915,12 +4943,12 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                     <span class="font-bold">GST Payable on Reverse Charge:</span> ${invoiceData.reverse_charge || 'No'}
                 </div>
                 <div class="final-footer">
-                    <div class="common-seal" style="width: 50%; text-align: left; padding: 0 10mm 5mm 2mm; align-self: flex-end;">
+                    <div class="common-seal">
                         (Common Seal)
                     </div>
-                    <div class="signature" style="width: 50%; text-align: right; padding: 0 2mm 5mm 10mm;">
+                    <div class="signature">
                         <div>Certified that the particulars given above are true & correct.</div>
-                        <div style="margin-top:10mm;" class="font-bold">For, ${companyProfile.company_name}</div>
+                        <div style="margin-top:15mm;" class="font-bold">For, ${companyProfile.company_name}</div>
                         <div style="margin-top:2mm;">Authorised Signatory [E & OE]</div>
                     </div>
                 </div>
@@ -4945,7 +4973,6 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         alert("Could not prepare invoice for printing: " + error.message);
     }
 }
-
 function convertAmountToWords(amount) {
     // --- THIS IS THE KEY FIX FOR NEGATIVE NUMBERS ---
     const isNegative = amount < 0;
