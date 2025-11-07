@@ -3816,14 +3816,31 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
 
             const subtotalForTaxCalc = parseFloat(inv.amount_before_tax) || 0;
             if (inv.invoice_type === 'TAX_INVOICE' || inv.invoice_type === 'SALES_RETURN') {
-                // Calculate and set the overall rates based on the saved totals
-                const cgstRate = (inv.total_cgst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_cgst_amount / subtotalForTaxCalc) * 100) / 2 : 0;
-                const sgstRate = (inv.total_sgst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_sgst_amount / subtotalForTaxCalc) * 100) / 2 : 0;
-                const igstRate = (inv.total_igst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_igst_amount / subtotalForTaxCalc) * 100) : 0;
                 
-                document.getElementById("inv_cgst_rate_overall").value = cgstRate.toFixed(2);
-                document.getElementById("inv_sgst_rate_overall").value = sgstRate.toFixed(2);
-                document.getElementById("inv_igst_rate_overall").value = igstRate.toFixed(2);
+                // --- START: CORRECTED GST RATE CALCULATION FOR EDIT ---
+                let calculatedCgstRate = 0;
+                let calculatedSgstRate = 0;
+                let calculatedIgstRate = 0;
+
+                if (subtotalForTaxCalc !== 0) {
+                    const totalCgstAmt = parseFloat(inv.total_cgst_amount) || 0;
+                    const totalSgstAmt = parseFloat(inv.total_sgst_amount) || 0;
+                    const totalIgstAmt = parseFloat(inv.total_igst_amount) || 0;
+                    
+                    if (totalIgstAmt !== 0) {
+                        calculatedIgstRate = (totalIgstAmt / subtotalForTaxCalc) * 100;
+                    } else if (totalCgstAmt !== 0 || totalSgstAmt !== 0) {
+                        calculatedCgstRate = (totalCgstAmt / subtotalForTaxCalc) * 100;
+                        calculatedSgstRate = (totalSgstAmt / subtotalForTaxCalc) * 100;
+                    }
+                }
+                
+                // Set the derived rates
+                document.getElementById("inv_cgst_rate_overall").value = calculatedCgstRate.toFixed(2);
+                document.getElementById("inv_sgst_rate_overall").value = calculatedSgstRate.toFixed(2);
+                document.getElementById("inv_igst_rate_overall").value = calculatedIgstRate.toFixed(2);
+                // --- END: CORRECTED GST RATE CALCULATION FOR EDIT ---
+
             } else {
                 document.getElementById("inv_cgst_rate_overall").value = 0;
                 document.getElementById("inv_sgst_rate_overall").value = 0;
@@ -3831,10 +3848,8 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
             }
 
             if (inv.line_items && Array.isArray(inv.line_items)) {
-                // Pass the line items, ensuring the quantity is positive for display purposes
                 inv.line_items.forEach((item) => addInvLineItemRow({ ...item, quantity: Math.abs(item.quantity) }));
             } else {
-                // If no line items, add one blank row
                 addInvLineItemRow();
             }
 
@@ -3851,9 +3866,13 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
         if (invoiceNumberInput) invoiceNumberInput.placeholder = (type === 'SALES_RETURN') ? "Auto-generated as CN-..." : "Enter or Suggest Invoice Number";
         document.getElementById("inv_invoice_date").value = new Date().toISOString().split("T")[0];
         document.getElementById("inv_due_date").value = new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split("T")[0];
+        
+        // --- Set default 5% GST split (2.5% each) for new Intra-State invoice (overridden later by populateCustomerDetailsForInvoice) ---
         document.getElementById("inv_cgst_rate_overall").value = 2.5;
         document.getElementById("inv_sgst_rate_overall").value = 2.5;
         document.getElementById("inv_igst_rate_overall").value = 0;
+        // --- END default setting ---
+        
         if (paymentBeingMadeNowInput) {
             paymentBeingMadeNowInput.value = "0.00";
             paymentBeingMadeNowInput.placeholder = "Enter payment amount if any";
@@ -3868,7 +3887,7 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
         addInvLineItemRow();
     }
     
-    // 1. Populate Customer Details (sets state/GSTIN, etc.)
+    // 1. Populate Customer Details (sets state/GSTIN, and triggers IGST logic)
     populateCustomerDetailsForInvoice();
     
     // 2. Explicitly call toggleGstFields (sets visibility and overall rates)
@@ -3880,7 +3899,6 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
     toggleOriginalInvoiceSection();
 
     // 4. CRITICAL: Force update totals *after* all data and rates are set
-    // This addresses the issue where fetched totals might not immediately display correctly
     updateInvTotals(); 
     
     modal.classList.add('show');
@@ -4005,6 +4023,9 @@ function populateCustomerDetailsForInvoice() {
     const placeOfSupplyState = document.getElementById("inv_place_of_supply_state");
     const placeOfSupplyStateCode = document.getElementById("inv_place_of_supply_state_code");
 
+    // Default Tax Rate is assumed to be 5% for the application. (Standard GST rate for simplification)
+    const DEFAULT_TOTAL_GST_RATE = 5.00; 
+
     if (customer) {
         if (nameDisplay) nameDisplay.value = customer.username || "";
         let address = (customer.address_line1 || "") + (customer.address_line2 ? "\n" + customer.address_line2 : "");
@@ -4015,18 +4036,41 @@ function populateCustomerDetailsForInvoice() {
         if (stateCodeDisplay) stateCodeDisplay.value = customer.state_code || "";
         if (placeOfSupplyState) placeOfSupplyState.value = customer.state || "";
         if (placeOfSupplyStateCode) placeOfSupplyStateCode.value = customer.state_code || "";
+        
+        // --- START NEW: IGST/SGST Auto-Detection Logic ---
+        const businessState = businessProfileCache?.state?.toUpperCase() || 'TAMILNADU';
+        const customerState = (customer.state || '').toUpperCase();
+        
+        if (customerState && customerState !== businessState) {
+             // Inter-state sale: Set IGST to 5.00% and CGST/SGST to 0.00%
+             document.getElementById("inv_igst_rate_overall").value = DEFAULT_TOTAL_GST_RATE.toFixed(2);
+             document.getElementById("inv_cgst_rate_overall").value = 0.00;
+             document.getElementById("inv_sgst_rate_overall").value = 0.00;
+        } else {
+             // Intra-state sale: Set IGST to 0.00% and CGST/SGST to 2.50% each (5% total)
+             document.getElementById("inv_igst_rate_overall").value = 0.00;
+             document.getElementById("inv_cgst_rate_overall").value = (DEFAULT_TOTAL_GST_RATE / 2).toFixed(2);
+             document.getElementById("inv_sgst_rate_overall").value = (DEFAULT_TOTAL_GST_RATE / 2).toFixed(2);
+        }
+        // --- END NEW: IGST/SGST Auto-Detection Logic ---
+        
     } else {
-        // Clear all fields if no customer is selected
+        // Clear fields and reset GST rates to the intra-state default if no customer selected
         if (nameDisplay) nameDisplay.value = "";
         if (addressDisplay) addressDisplay.value = "";
         if (gstinDisplay) gstinDisplay.value = "";
         if (stateCodeDisplay) stateCodeDisplay.value = "";
+        
         if (placeOfSupplyState) placeOfSupplyState.value = businessProfileCache ? businessProfileCache.state || "" : "";
         if (placeOfSupplyStateCode) placeOfSupplyStateCode.value = businessProfileCache ? businessProfileCache.state_code || "" : "";
+        
+         document.getElementById("inv_igst_rate_overall").value = 0.00;
+         document.getElementById("inv_cgst_rate_overall").value = (DEFAULT_TOTAL_GST_RATE / 2).toFixed(2);
+         document.getElementById("inv_sgst_rate_overall").value = (DEFAULT_TOTAL_GST_RATE / 2).toFixed(2);
     }
     
-    // This function is now the single source of truth. It will handle the consignee logic.
     toggleConsigneeFields(); 
+    updateInvTotals();
 }
 function toggleConsigneeFields() {
     const sameAsCustomerCheckbox = document.getElementById( "inv_same_as_customer" );
