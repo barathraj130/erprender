@@ -3805,9 +3805,14 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
 
             const subtotalForTaxCalc = parseFloat(inv.amount_before_tax) || 0;
             if (inv.invoice_type === 'TAX_INVOICE' || inv.invoice_type === 'SALES_RETURN') {
-                document.getElementById("inv_cgst_rate_overall").value = (inv.total_cgst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_cgst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 2.5;
-                document.getElementById("inv_sgst_rate_overall").value = (inv.total_sgst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_sgst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 2.5;
-                document.getElementById("inv_igst_rate_overall").value = (inv.total_igst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_igst_amount / subtotalForTaxCalc) * 100).toFixed(2) : 0;
+                // Calculate and set the overall rates based on the saved totals
+                const cgstRate = (inv.total_cgst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_cgst_amount / subtotalForTaxCalc) * 100) / 2 : 0;
+                const sgstRate = (inv.total_sgst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_sgst_amount / subtotalForTaxCalc) * 100) / 2 : 0;
+                const igstRate = (inv.total_igst_amount && subtotalForTaxCalc !== 0) ? (Math.abs(inv.total_igst_amount / subtotalForTaxCalc) * 100) : 0;
+                
+                document.getElementById("inv_cgst_rate_overall").value = cgstRate.toFixed(2);
+                document.getElementById("inv_sgst_rate_overall").value = sgstRate.toFixed(2);
+                document.getElementById("inv_igst_rate_overall").value = igstRate.toFixed(2);
             } else {
                 document.getElementById("inv_cgst_rate_overall").value = 0;
                 document.getElementById("inv_sgst_rate_overall").value = 0;
@@ -3815,6 +3820,7 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
             }
 
             if (inv.line_items && Array.isArray(inv.line_items)) {
+                // Pass the line items, ensuring the quantity is positive for display purposes
                 inv.line_items.forEach((item) => addInvLineItemRow({ ...item, quantity: Math.abs(item.quantity) }));
             } else {
                 addInvLineItemRow();
@@ -3859,7 +3865,8 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
     toggleOriginalInvoiceSection();
 
     modal.classList.add('show');
-}// in app-script.js
+}
+// in app-script.js
 
 async function openEntityTransactionHistoryModal(entityId, entityName, type = 'lender') {
     const modal = document.getElementById("entityTransactionHistoryModal");
@@ -4252,28 +4259,55 @@ function addInvLineItemRow(itemData = null) {
         
         if (e.target.value === "custom") {
             // Keep existing quantity, clear price/HSN/UoM for manual entry
-            currentDescriptionInput.value = ""; 
             currentDescriptionInput.placeholder = "Enter custom service/item";
-            row.querySelector(".inv-line-price").value = "0.00";
-            row.querySelector(".inv-line-hsn").value = "";
-            row.querySelector(".inv-line-uom").value = "Svc"; 
+            
+            // Only clear value if we are transitioning *from* a product selection
+            if (selectedOption && selectedOption.value !== "") {
+                 currentDescriptionInput.value = ""; 
+                 row.querySelector(".inv-line-price").value = "0.00";
+                 row.querySelector(".inv-line-hsn").value = "";
+                 row.querySelector(".inv-line-uom").value = "Svc"; 
+            } else if (!itemData) {
+                 row.querySelector(".inv-line-price").value = "0.00";
+                 row.querySelector(".inv-line-hsn").value = "";
+                 row.querySelector(".inv-line-uom").value = "Svc"; 
+            }
+
         } else if (selectedOption && selectedOption.value) {
             // Populate fields from product data
-            currentDescriptionInput.value = selectedOption.dataset.description || "";
             currentDescriptionInput.placeholder = "Manual Description (if needed)";
-            row.querySelector(".inv-line-price").value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
-            row.querySelector(".inv-line-hsn").value = selectedOption.dataset.hsn || "";
-            row.querySelector(".inv-line-uom").value = selectedOption.dataset.uom || "Pcs";
+            
+            // CRITICAL: Only auto-fill description, price, HSN, UoM if this is a NEW row (no itemData)
+            // or if the change is user-initiated (not the initial load dispatchEvent).
+            // For load events, the DB fields (description, hsn, uom) are already set below.
+            if (!itemData || !editingInvoiceId) {
+                currentDescriptionInput.value = selectedOption.dataset.description || "";
+                row.querySelector(".inv-line-price").value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
+                row.querySelector(".inv-line-hsn").value = selectedOption.dataset.hsn || "";
+                row.querySelector(".inv-line-uom").value = selectedOption.dataset.uom || "Pcs";
+            }
         }
         updateInvLineItemTotal(row);
     });
     // --- End Event Listener Logic ---
 
+    // --- CRITICAL FIX BLOCK ---
     if (itemData) {
-        if (itemData.product_id) productSelect.value = itemData.product_id;
-        else productSelect.value = "custom"; 
+        // 1. Select the correct option: real product ID or 'custom'
+        if (itemData.product_id) {
+            productSelect.value = itemData.product_id;
+        } else {
+            productSelect.value = "custom"; 
+        }
+        
+        // 2. Explicitly ensure manual fields are populated from DB before event dispatch
         descriptionInput.value = itemData.description || ""; 
-        // Trigger change event to set price/HSN/UoM based on selection/custom logic
+        hsnInput.value = itemData.hsn_acs_code || itemData.final_hsn_acs_code || "";
+        uomInput.value = itemData.unit_of_measure || itemData.final_unit_of_measure || "Pcs";
+
+        // 3. Dispatch change event. This ensures the totals are calculated, 
+        // and if a product was selected, the default price/hsn/uom from product data 
+        // is loaded IF the DB values were missing (though usually DB values are present).
         const event = new Event('change', { bubbles: true }); 
         productSelect.dispatchEvent(event);
     } else {
