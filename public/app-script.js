@@ -4795,10 +4795,17 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             </tr>`;
         });
         
-        // Removed padding rows to save space and force 1 page print
-        // for (let i = invoiceData.line_items.length; i < 15; i++) {
-        //      itemsHtml += `<tr><td style="height:1.5em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
-        // }
+        // --- START FIX: Ensure a minimum of 14 rows are displayed ---
+        const MIN_ROWS_TO_DISPLAY = 14; 
+        const currentRowCount = invoiceData.line_items.length;
+        const emptyRowsNeeded = Math.max(0, MIN_ROWS_TO_DISPLAY - currentRowCount);
+
+        // Add empty rows to ensure the minimum number of lines
+        for (let i = 0; i < emptyRowsNeeded; i++) {
+            // Using a specific height to help control table layout
+            itemsHtml += `<tr><td style="height:1.5em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+        }
+        // --- END FIX ---
 
         itemsHtml += `</tbody><tfoot><tr>
             <td colspan="4" class="font-bold text-right">Total</td>
