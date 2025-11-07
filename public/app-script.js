@@ -4168,6 +4168,7 @@ function addInvLineItemRow(itemData = null) {
     const tableBody = document.getElementById("invLineItemsTableBody");
     const newRow = tableBody.insertRow();
 
+    // ... (Product Select creation - unchanged) ...
     const productCell = newRow.insertCell();
     productCell.style.verticalAlign = "top"; 
     const productSelect = document.createElement("select");
@@ -4194,6 +4195,7 @@ function addInvLineItemRow(itemData = null) {
     descriptionInput.type = "text";
     descriptionInput.className = "form-control inv-line-description";
     descriptionInput.placeholder = "Manual Description (if needed)";
+    // Initialize value from itemData explicitly
     descriptionInput.value = itemData ? itemData.description : "";
     productCell.appendChild(descriptionInput);
 
@@ -4202,6 +4204,7 @@ function addInvLineItemRow(itemData = null) {
     hsnInput.type = "text";
     hsnInput.className = "form-control inv-line-hsn";
     hsnInput.placeholder = "HSN";
+    // Initialize value from itemData explicitly
     hsnInput.value = itemData ? (itemData.hsn_acs_code || itemData.final_hsn_acs_code || "") : ""; 
     hsnCell.appendChild(hsnInput);
 
@@ -4210,17 +4213,17 @@ function addInvLineItemRow(itemData = null) {
     uomInput.type = "text";
     uomInput.className = "form-control inv-line-uom";
     uomInput.placeholder = "UoM";
+    // Initialize value from itemData explicitly
     uomInput.value = itemData ? (itemData.unit_of_measure || itemData.final_unit_of_measure || "Pcs") : "Pcs";
     uomCell.appendChild(uomInput);
 
     // --- Price/Qty/Discount Inputs ---
-    
     const qtyCell = newRow.insertCell();
     const qtyInput = document.createElement("input");
     qtyInput.type = "number";
     qtyInput.className = "form-control inv-line-qty num"; 
     qtyInput.step="any";
-    qtyInput.value = itemData ? itemData.quantity : 1;
+    qtyInput.value = itemData ? itemData.quantity : 1; // Initialize value from itemData explicitly
     qtyInput.addEventListener("input", (e) => updateInvLineItemTotal(e.target.closest("tr")));
     qtyCell.appendChild(qtyInput);
 
@@ -4229,7 +4232,7 @@ function addInvLineItemRow(itemData = null) {
     priceInput.type = "number";
     priceInput.step = "0.01";
     priceInput.className = "form-control inv-line-price num";
-    priceInput.value = itemData ? parseFloat(itemData.unit_price).toFixed(2) : "0.00";
+    priceInput.value = itemData ? parseFloat(itemData.unit_price).toFixed(2) : "0.00"; // Initialize value from itemData explicitly
     priceInput.addEventListener("input", (e) => updateInvLineItemTotal(e.target.closest("tr")));
     priceCell.appendChild(priceInput);
 
@@ -4239,7 +4242,7 @@ function addInvLineItemRow(itemData = null) {
     discountInput.step = "0.01";
     discountInput.className = "form-control inv-line-discount num";
     discountInput.placeholder = "0.00";
-    discountInput.value = itemData ? (parseFloat(itemData.discount_amount) || 0).toFixed(2) : "0.00";
+    discountInput.value = itemData ? (parseFloat(itemData.discount_amount) || 0).toFixed(2) : "0.00"; // Initialize value from itemData explicitly
     discountInput.addEventListener("input", (e) => updateInvLineItemTotal(e.target.closest("tr")));
     discountCell.appendChild(discountInput);
     
@@ -4258,44 +4261,36 @@ function addInvLineItemRow(itemData = null) {
     removeButton.onclick = () => { newRow.remove(); updateInvTotals(); };
     actionCell.appendChild(removeButton);
     
-    // --- Event Listener Logic (Crucial for auto-filling and calculating) ---
+    // --- Event Listener Logic ---
     productSelect.addEventListener("change", (e) => {
         const selectedOption = e.target.options[e.target.selectedIndex];
         const row = e.target.closest("tr");
         if (!row) return;
 
-        const currentDescriptionInput = row.querySelector(".inv-line-description");
-        const priceInput = row.querySelector(".inv-line-price");
-        const hsnInput = row.querySelector(".inv-line-hsn");
-        const uomInput = row.querySelector(".inv-line-uom");
+        const isInitialLoad = !!itemData && editingInvoiceId; 
         
         if (e.target.value === "custom") {
-            // Keep existing quantity, clear price/HSN/UoM for manual entry
             currentDescriptionInput.placeholder = "Enter custom service/item";
             
-            // Only clear value if we are transitioning *from* a product selection
-            if (selectedOption && selectedOption.value !== "") {
-                 currentDescriptionInput.value = ""; 
-                 priceInput.value = "0.00";
-                 hsnInput.value = "";
-                 uomInput.value = "Svc"; 
-            } else if (!itemData) {
-                 priceInput.value = "0.00";
-                 hsnInput.value = "";
-                 uomInput.value = "Svc"; 
+            // If this is a user manual change, or a blank new row
+            if (!isInitialLoad || selectedOption.value !== "custom") {
+                 row.querySelector(".inv-line-price").value = "0.00";
+                 row.querySelector(".inv-line-hsn").value = "";
+                 row.querySelector(".inv-line-uom").value = "Svc"; 
+                 if (!isInitialLoad) {
+                    currentDescriptionInput.value = "";
+                 }
             }
-
         } else if (selectedOption && selectedOption.value) {
-            // Populate fields from product data
             currentDescriptionInput.placeholder = "Manual Description (if needed)";
             
-            // CRITICAL: Only auto-fill description, price, HSN, UoM if this is a NEW row (no itemData)
-            // or if the change is user-initiated (not the initial load dispatchEvent).
-            if (!itemData || !editingInvoiceId) {
+            // IMPORTANT: Only auto-fill price, HSN, UoM if this is NOT the initial load.
+            // During initial load, we trust the prices/details saved in itemData/DB
+            if (!isInitialLoad) {
                 currentDescriptionInput.value = selectedOption.dataset.description || "";
-                priceInput.value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
-                hsnInput.value = selectedOption.dataset.hsn || "";
-                uomInput.value = selectedOption.dataset.uom || "Pcs";
+                row.querySelector(".inv-line-price").value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
+                row.querySelector(".inv-line-hsn").value = selectedOption.dataset.hsn || "";
+                row.querySelector(".inv-line-uom").value = selectedOption.dataset.uom || "Pcs";
             }
         }
         updateInvLineItemTotal(row);
@@ -4311,14 +4306,12 @@ function addInvLineItemRow(itemData = null) {
             productSelect.value = "custom"; 
         }
         
-        // 2. Explicitly ensure manual fields are populated from DB before event dispatch
-        descriptionInput.value = itemData.description || ""; 
-        hsnInput.value = itemData.hsn_acs_code || itemData.final_hsn_acs_code || "";
-        uomInput.value = itemData.unit_of_measure || itemData.final_unit_of_measure || "Pcs";
-
-        // 3. Dispatch change event.
+        // 2. Dispatch change event. (This triggers calculations and ensures visibility)
+        // We set a flag on the element temporarily to tell the listener to skip overwriting fields
+        productSelect.dataset.initialLoad = 'true';
         const event = new Event('change', { bubbles: true }); 
         productSelect.dispatchEvent(event);
+        delete productSelect.dataset.initialLoad; // Clean up the flag
     } else {
         // Run updateInvTotals immediately for a new, empty row to initialize totals
         updateInvTotals(); 
