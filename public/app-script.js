@@ -4662,6 +4662,7 @@ async function printCurrentInvoice() {
         alert("Please save the invoice first or ensure an invoice is loaded in the modal to print.");
     }
 }
+
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     try {
         const [invoiceRes, companyProfile] = await Promise.all([
