@@ -4686,53 +4686,53 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         printWindow.document.write(`
             <style>
-                /* Aggressive print styling to ensure single-page fit and density */
-                body { font-family: "Arial", sans-serif; font-size: 8pt; margin: 0; color: #000; } 
+                /* Maximum compression applied */
+                body { font-family: "Arial", sans-serif; font-size: 8pt; margin: 0 !important; padding: 0 !important; color: #000; } 
                 @page { size: A4; margin: 0; }
-                .print-container { width: 210mm; height: 297mm; padding: 2mm; box-sizing: border-box; } /* Reduced overall padding */
+                .print-container { width: 210mm; height: 297mm; padding: 1mm; box-sizing: border-box; } /* Minimal overall padding */
                 .invoice-box { border: 1px solid #000; padding: 0mm; box-sizing: border-box; }
                 
                 /* Main structure table */
-                .main-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+                .main-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
                 .main-print-table td, .main-print-table th { padding: 0.5mm 1.5mm; vertical-align: top; border: 1px solid #000; } /* Reduced cell padding */
                 .main-print-table .no-border { border: none !important; padding: 0 1.5mm; }
 
                 /* Header Styling */
-                .header-text { font-size: 9pt; font-weight: bold; text-align: center; } /* Reduced font size */
-                .header-subtext { font-size: 7.5pt; text-align: center; } /* Reduced font size */
-                .invoice-title-bar { font-size: 11pt; font-weight: bold; text-align: center; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; }
+                .header-text { font-size: 9pt; font-weight: bold; text-align: center; margin: 0; } 
+                .header-subtext { font-size: 7pt; text-align: center; line-height: 1.1; margin: 0; } /* Maximum line spacing reduction */
+                .invoice-title-bar { font-size: 10pt; font-weight: bold; text-align: center; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 0.5mm 0; } /* Reduced padding */
 
                 /* Detail Grid Styling */
                 .detail-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-                .detail-grid td { padding: 0.5mm 1.5mm; font-size: 7.5pt; } /* Reduced font size and padding */
-                .detail-grid .detail-label { font-weight: bold; width: 30%; } /* Reduced label width */
-                .detail-box-title { font-weight: bold; text-decoration: underline; margin-bottom: 0.5mm; display: block; }
+                .detail-grid td { padding: 0.5mm 1.5mm; font-size: 7pt; } /* Reduced font size and padding */
+                .detail-grid .detail-label { font-weight: bold; width: 30%; } 
+                .detail-box-title { font-weight: bold; text-decoration: underline; margin-bottom: 0; display: block; }
                 
-                /* Items Table Styling (Adjusted for better text alignment/density) */
+                /* Items Table Styling */
                 .items-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-                .items-table th, .items-table td { border: 1px solid #000; padding: 1mm 1.5mm; font-size: 7.5pt; height: 3mm; } /* Reduced padding and added fixed row height */
+                .items-table th, .items-table td { border: 1px solid #000; padding: 1mm 1.5mm; font-size: 7.5pt; height: 3mm; } 
                 .items-table th { background-color: #f2f2f2; text-align: center; }
-                .items-table td { vertical-align: top !important; } /* Ensure product box aligns to top */
+                .items-table td { vertical-align: top !important; } 
                 
                 /* Footer Styling */
                 .totals-box { width: 100%; border-collapse: collapse; table-layout: fixed; }
-                .totals-box td { padding: 0.5mm 1.5mm; font-size: 8pt; }
+                .totals-box td { padding: 0.5mm 1.5mm; font-size: 7.5pt; } /* Reduced font size */
                 .totals-box .total-label { font-weight: bold; }
                 .totals-box .total-amount { font-weight: bold; text-align: right; }
-                .totals-box .total-final { border-top: 1px solid #000; font-size: 9pt; }
+                .totals-box .total-final { border-top: 1px solid #000; font-size: 8pt; }
                 
                 /* Signature Area Styling */
                 .final-footer-container { 
                     border-top: 1px solid #000; 
-                    padding-top: 1mm; /* Reduced padding */
-                    padding-bottom: 1mm;
+                    padding-top: 0.5mm; /* Reduced padding */
+                    padding-bottom: 0.5mm;
                 }
 
                 .final-footer { 
                     display: flex; 
                     justify-content: space-between; 
                     width: 100%; 
-                    min-height: 25mm; /* Reduced minimum space */
+                    min-height: 20mm; /* Minimal height for signature space */
                     align-items: flex-end; 
                 }
                 .signature { 
@@ -4881,7 +4881,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         });
         
         for (let i = 0; i < emptyRowsNeeded; i++) {
-            mainHtml += `<tr><td style="height:3mm;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`; // Using 3mm height as per item th/td height
+            mainHtml += `<tr><td style="height:3mm;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
         }
 
         // --- 6. Items Footer (Totals Row) ---
@@ -4906,7 +4906,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                         <td class="no-border" colspan="2" style="padding-top: 1mm;">
                             <span class="font-bold">Total Invoice Amount in words</span>
                             <br>
-                            <span style="text-transform: uppercase; font-weight: bold; font-size: 9pt;">${invoiceData.amount_in_words || convertAmountToWords(grandTotal) + ' RUPEES ONLY'}</span>
+                            <span style="text-transform: uppercase; font-weight: bold; font-size: 8.5pt;">${invoiceData.amount_in_words || convertAmountToWords(grandTotal) + ' RUPEES ONLY'}</span>
                         </td>
                     </tr>
                     <tr><td class="no-border detail-label" style="width: 30%;">Bundles</td><td class="no-border font-bold">${invoiceData.bundles_count || 'N/A'}</td></tr>
@@ -4963,6 +4963,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         printWindow.document.close();
         printWindow.focus();
         
+        // Final attempt to trigger print dialog after content load
         setTimeout(() => {
             printWindow.print();
             printWindow.close();
