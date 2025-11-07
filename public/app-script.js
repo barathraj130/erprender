@@ -3823,6 +3823,7 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
                 // Pass the line items, ensuring the quantity is positive for display purposes
                 inv.line_items.forEach((item) => addInvLineItemRow({ ...item, quantity: Math.abs(item.quantity) }));
             } else {
+                // If no line items, add one blank row
                 addInvLineItemRow();
             }
 
@@ -3855,17 +3856,25 @@ async function openInvoiceModal(invoiceId = null, type = 'TAX_INVOICE') {
         }
         addInvLineItemRow();
     }
+    
+    // 1. Populate Customer Details (sets state/GSTIN, etc.)
     populateCustomerDetailsForInvoice();
     
-    // Explicitly call toggleGstFields after setting up the form, especially for editing.
+    // 2. Explicitly call toggleGstFields (sets visibility and overall rates)
     toggleGstFields();
     
+    // 3. Toggle visual sections (consignee, discount, returns)
     togglePartyBillReturnsField();
     toggleConsigneeFields();
     toggleOriginalInvoiceSection();
 
+    // 4. CRITICAL: Force update totals *after* all data and rates are set
+    // This addresses the issue where fetched totals might not immediately display correctly
+    updateInvTotals(); 
+    
     modal.classList.add('show');
 }
+
 // in app-script.js
 
 async function openEntityTransactionHistoryModal(entityId, entityName, type = 'lender') {
@@ -4256,6 +4265,9 @@ function addInvLineItemRow(itemData = null) {
         if (!row) return;
 
         const currentDescriptionInput = row.querySelector(".inv-line-description");
+        const priceInput = row.querySelector(".inv-line-price");
+        const hsnInput = row.querySelector(".inv-line-hsn");
+        const uomInput = row.querySelector(".inv-line-uom");
         
         if (e.target.value === "custom") {
             // Keep existing quantity, clear price/HSN/UoM for manual entry
@@ -4264,13 +4276,13 @@ function addInvLineItemRow(itemData = null) {
             // Only clear value if we are transitioning *from* a product selection
             if (selectedOption && selectedOption.value !== "") {
                  currentDescriptionInput.value = ""; 
-                 row.querySelector(".inv-line-price").value = "0.00";
-                 row.querySelector(".inv-line-hsn").value = "";
-                 row.querySelector(".inv-line-uom").value = "Svc"; 
+                 priceInput.value = "0.00";
+                 hsnInput.value = "";
+                 uomInput.value = "Svc"; 
             } else if (!itemData) {
-                 row.querySelector(".inv-line-price").value = "0.00";
-                 row.querySelector(".inv-line-hsn").value = "";
-                 row.querySelector(".inv-line-uom").value = "Svc"; 
+                 priceInput.value = "0.00";
+                 hsnInput.value = "";
+                 uomInput.value = "Svc"; 
             }
 
         } else if (selectedOption && selectedOption.value) {
@@ -4279,19 +4291,18 @@ function addInvLineItemRow(itemData = null) {
             
             // CRITICAL: Only auto-fill description, price, HSN, UoM if this is a NEW row (no itemData)
             // or if the change is user-initiated (not the initial load dispatchEvent).
-            // For load events, the DB fields (description, hsn, uom) are already set below.
             if (!itemData || !editingInvoiceId) {
                 currentDescriptionInput.value = selectedOption.dataset.description || "";
-                row.querySelector(".inv-line-price").value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
-                row.querySelector(".inv-line-hsn").value = selectedOption.dataset.hsn || "";
-                row.querySelector(".inv-line-uom").value = selectedOption.dataset.uom || "Pcs";
+                priceInput.value = parseFloat(selectedOption.dataset.price || 0).toFixed(2);
+                hsnInput.value = selectedOption.dataset.hsn || "";
+                uomInput.value = selectedOption.dataset.uom || "Pcs";
             }
         }
         updateInvLineItemTotal(row);
     });
     // --- End Event Listener Logic ---
 
-    // --- CRITICAL FIX BLOCK ---
+    // --- CRITICAL FIX BLOCK: Load data and dispatch event ---
     if (itemData) {
         // 1. Select the correct option: real product ID or 'custom'
         if (itemData.product_id) {
@@ -4305,9 +4316,7 @@ function addInvLineItemRow(itemData = null) {
         hsnInput.value = itemData.hsn_acs_code || itemData.final_hsn_acs_code || "";
         uomInput.value = itemData.unit_of_measure || itemData.final_unit_of_measure || "Pcs";
 
-        // 3. Dispatch change event. This ensures the totals are calculated, 
-        // and if a product was selected, the default price/hsn/uom from product data 
-        // is loaded IF the DB values were missing (though usually DB values are present).
+        // 3. Dispatch change event.
         const event = new Event('change', { bubbles: true }); 
         productSelect.dispatchEvent(event);
     } else {
@@ -4336,7 +4345,8 @@ function updateInvTotals() {
         const price = parseFloat(row.querySelector(".inv-line-price").value) || 0;
         const discount = parseFloat(row.querySelector(".inv-line-discount").value) || 0;
 
-        const taxableValue = (qty * price) - discount;
+        const amountBeforeDiscount = qty * price;
+        const taxableValue = amountBeforeDiscount - discount;
         
         // Accumulate sales subtotal (positive quantities)
         if (qty >= 0) {

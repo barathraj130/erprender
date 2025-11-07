@@ -1,3 +1,5 @@
+// routes/invoiceRoutes.js
+
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db'); 
@@ -179,6 +181,7 @@ router.get('/:id', async (req, res) => {
                           WHERE ili.invoice_id = $1`;
         
         const items = await dbQuery(itemsSql, [id]);
+        // IMPORTANT: Ensure all rates/amounts default to 0 to prevent JSON/JS errors if null
         invoice.line_items = items.map(item => ({...item, cgst_rate: item.cgst_rate || 0, cgst_amount: item.cgst_amount || 0, sgst_rate: item.sgst_rate || 0, sgst_amount: item.sgst_amount || 0, igst_rate: item.igst_rate || 0, igst_amount: item.igst_amount || 0 })) || [];
         res.json(invoice);
     } catch (error) {
