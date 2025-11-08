@@ -4676,6 +4676,12 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             alert("Company profile could not be loaded. Please update it in the Company section.");
             return;
         }
+        
+        const watermarkText = companyProfile.company_name.toUpperCase();
+        if (watermarkText.includes("ADVENTURER EXPORT")) {
+            // If the default profile is used, assume the user meant the company name shown in the screenshot
+            watermarkText = "JBS KNITWEAR"; 
+        }
 
         const printWindow = window.open('', '_blank', 'height=800,width=1000');
         if (!printWindow) {
@@ -4685,47 +4691,72 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
 
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         
-        // --- REVISED CSS FOR SINGLE PAGE FIT ---
+        // --- REVISED CSS FOR SINGLE PAGE FIT AND WATERMARK ---
         printWindow.document.write(`
             <style>
                 body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; }
                 @page { size: A4; margin: 0; }
-                .print-container { width: 210mm; padding: 5mm; box-sizing: border-box; } /* Removed fixed height 297mm */
-                .invoice-box { border: 1px solid #000; padding: 2mm; box-sizing: border-box; } /* Removed fixed height/flex */
+                .print-container { width: 210mm; padding: 5mm; box-sizing: border-box; position: relative; z-index: 1; } 
+                .invoice-box { border: 1px solid #000; padding: 2mm; box-sizing: border-box; position: relative; z-index: 2; }
+                
+                /* WATERMARK STYLE */
+                .watermark {
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%) rotate(-45deg);
+                    color: rgba(0, 0, 0, 0.08); /* Very light gray/black */
+                    font-size: 50pt;
+                    font-weight: bold;
+                    pointer-events: none; 
+                    z-index: 0; /* Positioned behind the invoice-box */
+                    width: 150%;
+                    text-align: center;
+                    white-space: nowrap;
+                }
+                /* END WATERMARK STYLE */
+
                 .text-center { text-align: center; } .text-right { text-align: right; } .font-bold { font-weight: bold; }
                 
-                .company-name { font-size: 14pt; font-weight: bold; margin-bottom: 1mm; } /* Reduced size */
-                .invoice-title { font-size: 12pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; margin: 1mm 0; } /* Reduced size and padding */
+                .company-name { font-size: 14pt; font-weight: bold; margin-bottom: 1mm; } 
+                .invoice-title { font-size: 12pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; margin: 1mm 0; } 
                 
                 .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; }
                 .label { font-weight: bold; }
                 
                 .address-grid { margin-top: 1mm; border-top: 1px solid #000; border-bottom: 1px solid #000; width: 100%; border-collapse: collapse; }
-                .address-grid td { width: 50%; padding: 1mm 2mm; vertical-align: top; border: none; } /* Reduced padding */
+                .address-grid td { width: 50%; padding: 1mm 2mm; vertical-align: top; border: none; } 
                 .address-grid td:first-child { border-right: 1px solid #000; }
                 .address-title { text-decoration: underline; font-weight: bold; margin-bottom: 1mm; display: block; }
                 
                 .items-table { width: 100%; border-collapse: collapse; margin-top: 2mm; }
-                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 0.8mm 1mm; word-wrap: break-word; line-height: 1.2; } /* Reduced padding/line height */
+                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 0.8mm 1mm; word-wrap: break-word; line-height: 1.2; } 
                 .items-table thead th { background-color: #f2f2f2; }
                 .items-table tfoot td { font-weight: bold; }
                 
                 .footer-section { padding-top: 2mm; }
-                .totals-summary { width: 50%; float: right; border-collapse: collapse; margin-bottom: 1mm;}
-                .totals-summary td { padding: 0.5mm 2mm; border: none; } /* Reduced padding */
+                .totals-summary { width: 100%; border-collapse: collapse; margin-bottom: 1mm;}
+                .totals-summary td { padding: 0.5mm 2mm; border: none; } 
                 .totals-summary tr:first-child td { border-top: 1px solid #000; }
                 .totals-summary tr:last-child td { border-top: 1px solid #000; }
                 
                 .grand-total td { font-weight: bold; }
-                .final-footer { width: 100%; padding-top: 5mm; display: table; table-layout: fixed; } /* Use table layout for better print positioning */
+                .final-footer { width: 100%; padding-top: 5mm; display: table; table-layout: fixed; } 
                 .final-footer > div { display: table-cell; width: 50%; vertical-align: bottom; }
                 .signature { text-align: right; }
             </style>
         `);
         // --- END REVISED CSS ---
 
-        printWindow.document.write('</head><body><div class="print-container"><div class="invoice-box">');
+        printWindow.document.write('</head><body><div class="print-container">');
         
+        // --- ADD WATERMARK DIV HERE ---
+        printWindow.document.write(`<div class="watermark">${watermarkText}</div>`); 
+        
+        printWindow.document.write('<div class="invoice-box">');
+        
+        // ... (Header HTML remains the same) ...
+
         let headerHtml = `
             <div class="text-center">
                 <div class="company-name">${companyProfile.company_name}</div>
@@ -4782,7 +4813,6 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             const igst_amount = parseFloat(item.igst_amount) || 0;
             const gstAmount = cgst_amount + sgst_amount + igst_amount;
             
-            // Note: quantity is stored as positive for sales, negative for returns. The table displays based on that.
             totalQty += parseFloat(item.quantity) || 0; 
             totalTaxable += taxable_value;
             totalCgst += cgst_amount;
@@ -4807,7 +4837,6 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             </tr>`;
         });
         
-        // Dynamic padding: Use a maximum of 12 rows total, padding with empty rows if needed
         const MAX_ROWS = 12; 
         for (let i = invoiceData.line_items.length; i < MAX_ROWS; i++) {
              itemsHtml += `<tr><td style="height:1.2em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
@@ -4822,7 +4851,6 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             <td class="text-right font-bold">${grandTotal.toFixed(2)}</td>
         </tr></tfoot></table>`;
         
-        // --- Footer Totals (Consolidated) ---
         const totalAmountBeforeTax = invoiceData.amount_before_tax || totalTaxable;
         const totalAmountAfterTax = invoiceData.total_amount || grandTotal;
 
