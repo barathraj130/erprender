@@ -4663,11 +4663,9 @@ async function printCurrentInvoice() {
     }
 }
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
-    const MIN_ROWS_TO_DISPLAY = 15;
-    const HEIGHT_OF_FIXED_ELEMENTS_MM = 105;
-    const A4_HEIGHT_MM = 297;
-    const TOTAL_PADDING_MM = 2;
-    const DYNAMIC_ITEM_AREA_HEIGHT = (A4_HEIGHT_MM - HEIGHT_OF_FIXED_ELEMENTS_MM - TOTAL_PADDING_MM) + 'mm';
+
+    const MIN_ROWS_TO_DISPLAY = 18; // Matches your PDF visible rows
+    const ROW_HEIGHT = "7mm"; // EXACT row height like your PDF
 
     try {
         const [invoiceRes, companyProfile] = await Promise.all([
@@ -4678,100 +4676,110 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         if (!invoiceRes.ok) throw new Error("Could not fetch invoice");
         const invoiceData = await invoiceRes.json();
 
-        const printWindow = window.open('', '_blank', 'height=800,width=1000');
-        if (!printWindow) return alert("Enable pop-ups to print invoice.");
+        const printWindow = window.open('', '_blank', 'width=1000,height=800');
+        if (!printWindow) return alert("Enable popup windows.");
 
         printWindow.document.write(`
 <!DOCTYPE html>
 <html>
 <head>
 <title>Invoice ${invoiceData.invoice_number}</title>
+
 <style>
 @page { size:A4; margin:0; }
-body { font-family: Arial; font-size:8pt; margin:0; padding:0; }
-.print-container { width:210mm; min-height:297mm; padding:1mm; box-sizing:border-box; }
-.main-print-table { width:100%; border-collapse:collapse; table-layout:fixed; }
-.main-print-table td, .main-print-table th { border:1px solid #000; padding:2px 3px; }
-.text-right { text-align:right; }
+body { margin:0; padding:0; font-family:Arial; font-size:8pt; }
+table { border-collapse:collapse; width:100%; }
+
+.inv-table td, .inv-table th {
+    border:1px solid #000;
+    padding:2px 3px;
+    height:${ROW_HEIGHT};
+    line-height:1.15;
+}
+
 .text-center { text-align:center; }
+.text-right { text-align:right; }
 .font-bold { font-weight:bold; }
-.items-table td, .items-table th { border:1px solid #000; padding:1.5px; font-size:7pt; }
-.items-table th { background:#f2f2f2; font-weight:bold; text-align:center; }
-.enforced-height-cell { height:${DYNAMIC_ITEM_AREA_HEIGHT}; vertical-align:top; padding:0; }
 </style>
 </head>
 <body>
-<div class="print-container">
-<table class="main-print-table">
-`);
 
-        // Header
-        printWindow.document.write(`
-<tr>
-<td colspan="16" class="text-center font-bold" style="font-size:14px;">${companyProfile.company_name}</td>
-</tr>
-<tr>
-<td colspan="16" class="text-center" style="font-size:8pt;">${companyProfile.address_line1}, ${companyProfile.city_pincode}, ${companyProfile.state}</td>
-</tr>
-<tr>
-<td colspan="16" class="text-center font-bold" style="font-size:9pt;">GSTIN No.: ${companyProfile.gstin}</td>
-</tr>
-<tr>
-<td colspan="16" class="text-center font-bold" style="text-decoration:underline; font-size:11pt;">TAX INVOICE</td>
-</tr>
-`);
+<table class="inv-table">
 
-        // Invoice details
-        printWindow.document.write(`
+<tr><td colspan="16" class="text-center font-bold" style="font-size:13pt;">${companyProfile.company_name}</td></tr>
+<tr><td colspan="16" class="text-center">${companyProfile.address_line1}, ${companyProfile.city_pincode}, ${companyProfile.state}</td></tr>
+<tr><td colspan="16" class="text-center font-bold">GSTIN: ${companyProfile.gstin}</td></tr>
+<tr><td colspan="16" class="text-center font-bold" style="text-decoration:underline;">TAX INVOICE</td></tr>
+
 <tr>
 <td colspan="8"><b>Invoice No:</b> ${invoiceData.invoice_number}</td>
 <td colspan="8"><b>Invoice Date:</b> ${new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td>
 </tr>
+
 <tr>
-<td colspan="8"><b>State:</b> ${invoiceData.customer_state || companyProfile.state}, Code: ${invoiceData.customer_state_code || companyProfile.state_code}</td>
-<td colspan="8"><b>Place of Supply:</b> ${invoiceData.place_of_supply_state || companyProfile.state}, Code: ${invoiceData.place_of_supply_state_code || companyProfile.state_code}</td>
+<td colspan="8"><b>State:</b> ${invoiceData.customer_state} (${invoiceData.customer_state_code})</td>
+<td colspan="8"><b>Place of Supply:</b> ${invoiceData.place_of_supply_state} (${invoiceData.place_of_supply_state_code})</td>
 </tr>
-`);
 
-        // Billing & Shipping
-        const customerAddress = `${invoiceData.customer_address_line1 || ''}\n${invoiceData.customer_address_line2 || ''}\n${invoiceData.customer_city_pincode || ''}`;
-        const consigneeAddress = `${invoiceData.consignee_address_line1 || ''}\n${invoiceData.consignee_address_line2 || ''}\n${invoiceData.consignee_city_pincode || ''}`;
-
-        printWindow.document.write(`
-<tr>
+<tr class="font-bold">
 <th colspan="8">Details of Receiver/Billed To:</th>
 <th colspan="8">Details of Consignee/Shipped To:</th>
 </tr>
+
 <tr>
-<td colspan="8">${invoiceData.customer_name}<br>${customerAddress.replace(/\n/g,"<br>")}<br>GSTIN: ${invoiceData.customer_gstin}</td>
-<td colspan="8">${invoiceData.consignee_name || companyProfile.company_name}<br>${consigneeAddress.replace(/\n/g,"<br>")}<br>GSTIN: ${invoiceData.consignee_gstin || companyProfile.gstin}</td>
+<td colspan="8">
+${invoiceData.customer_name}<br>
+${invoiceData.customer_address_line1}<br>
+${invoiceData.customer_address_line2 || ''}<br>
+${invoiceData.customer_city_pincode}<br>
+GSTIN: ${invoiceData.customer_gstin}
+</td>
+
+<td colspan="8">
+${invoiceData.consignee_name || invoiceData.customer_name}<br>
+${invoiceData.consignee_address_line1 || invoiceData.customer_address_line1}<br>
+${invoiceData.consignee_address_line2 || invoiceData.customer_address_line2 || ''}<br>
+${invoiceData.consignee_city_pincode || invoiceData.customer_city_pincode}<br>
+GSTIN: ${invoiceData.consignee_gstin || invoiceData.customer_gstin}
+</td>
+</tr>
+
+<!-- COLUMN HEADERS -->
+<tr class="font-bold text-center">
+<th style="width:3%;">Sr</th>
+<th style="width:28%;">Name of Product/Service</th>
+<th style="width:5.5%;">HSN</th>
+<th style="width:4%;">UOM</th>
+<th style="width:5%;">Qty</th>
+<th style="width:6%;">Rate</th>
+<th style="width:7%;">Amount</th>
+<th style="width:5%;">Disc</th>
+<th style="width:7%;">Taxable</th>
+<th style="width:3.5%;">CGST%</th>
+<th style="width:4%;">CGST Amt</th>
+<th style="width:3.5%;">SGST%</th>
+<th style="width:4%;">SGST Amt</th>
+<th style="width:3.5%;">IGST%</th>
+<th style="width:4%;">IGST Amt</th>
+<th style="width:7%;">Total</th>
 </tr>
 `);
 
-        // Items Header
-        printWindow.document.write(`
-<tr class="font-bold items-table">
-<th>Sr</th><th>Name of Product/Service</th><th>HSN</th><th>UOM</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Less Disc</th><th>Taxable</th><th>CGST%</th><th>CGST Amt</th><th>SGST%</th><th>SGST Amt</th><th>IGST%</th><th>IGST Amt</th><th>Total</th>
-</tr>
-`);
-
-        let totalTaxable = 0, totalCgst = 0, totalSgst = 0, totalIgst = 0, totalQty = 0;
-
-        // Item rows
-        printWindow.document.write(`<tr><td colspan="16" class="enforced-height-cell"><table class="items-table" style="width:100%; height:100%;"><tbody>`);
+        let totalQty=0,totalTaxable=0,totalCgst=0,totalSgst=0,totalIgst=0;
 
         invoiceData.line_items.forEach((item,i)=>{
-            totalQty += +item.quantity;
-            totalTaxable += +item.taxable_value;
-            totalCgst += +item.cgst_amount;
-            totalSgst += +item.sgst_amount;
-            totalIgst += +item.igst_amount;
+            totalQty+=+item.quantity;
+            totalTaxable+=+item.taxable_value;
+            totalCgst+=+item.cgst_amount;
+            totalSgst+=+item.sgst_amount;
+            totalIgst+=+item.igst_amount;
+
             printWindow.document.write(`
 <tr>
-<td>${i+1}</td>
+<td class="text-center">${i+1}</td>
 <td>${item.description}</td>
-<td>${item.final_hsn_acs_code}</td>
-<td>${item.final_unit_of_measure || 'PCS'}</td>
+<td class="text-center">${item.final_hsn_acs_code}</td>
+<td class="text-center">${item.final_unit_of_measure || 'PCS'}</td>
 <td class="text-right">${item.quantity}</td>
 <td class="text-right">${(+item.unit_price).toFixed(2)}</td>
 <td class="text-right">${(item.quantity*item.unit_price).toFixed(2)}</td>
@@ -4788,54 +4796,52 @@ body { font-family: Arial; font-size:8pt; margin:0; padding:0; }
 `);
         });
 
-        // Pad Empty Rows
-        for(let i=0;i<MIN_ROWS_TO_DISPLAY-invoiceData.line_items.length;i++){
+        for(let i=invoiceData.line_items.length;i<MIN_ROWS_TO_DISPLAY;i++){
             printWindow.document.write(`<tr>${'<td></td>'.repeat(16)}</tr>`);
         }
 
-        printWindow.document.write(`</tbody></table></td></tr>`);
+        const finalAmount = totalTaxable+totalCgst+totalSgst+totalIgst;
 
-        const finalAmount = totalTaxable + totalCgst + totalSgst + totalIgst;
-
-        // ✅ EXACT PDF FOOTER
+        // ✅ PDF FOOTER EXACT
         printWindow.document.write(`
-<tr><td colspan="16" class="font-bold">Total Amount in words: <span style="text-transform:uppercase;">${invoiceData.amount_in_words || convertAmountToWords(finalAmount) + ' RUPEES ONLY'}</span></td></tr>
+<tr><td colspan="16" class="font-bold">Total Amount in words: ${invoiceData.amount_in_words || convertAmountToWords(finalAmount)}</td></tr>
 
 <tr>
-<td colspan="8" style="border-right:1px solid #000;">
+<td colspan="8">
 <b>Bank Details:</b><br>
-BANK NAME: ${companyProfile.bank_name}<br>
-A/C NO: ${companyProfile.bank_account_no}<br>
-IFSC NO: ${companyProfile.bank_ifsc_code}<br>
+${companyProfile.bank_name}<br>
+A/C: ${companyProfile.bank_account_no}<br>
+IFSC: ${companyProfile.bank_ifsc_code}
 </td>
 
-<td colspan="8" style="padding:0;">
+<td colspan="8">
 <table style="width:100%; border-collapse:collapse;">
-<tr><td style="border:1px solid #000;">Total Amount Before Tax</td><td style="border:1px solid #000;" class="text-right">${totalTaxable.toFixed(2)}</td></tr>
-<tr><td style="border:1px solid #000;">Add: CGST</td><td style="border:1px solid #000;" class="text-right">${totalCgst.toFixed(2)}</td></tr>
-<tr><td style="border:1px solid #000;">Add: SGST</td><td style="border:1px solid #000;" class="text-right">${totalSgst.toFixed(2)}</td></tr>
-<tr><td style="border:1px solid #000;">Add: IGST</td><td style="border:1px solid #000;" class="text-right">${totalIgst.toFixed(2)}</td></tr>
-<tr><td style="border:1px solid #000; font-weight:bold;">Total Amount After Tax</td><td style="border:1px solid #000; font-weight:bold;" class="text-right">${finalAmount.toFixed(2)}</td></tr>
+<tr><td>Total Amount Before Tax</td><td class="text-right">${totalTaxable.toFixed(2)}</td></tr>
+<tr><td>Add: CGST</td><td class="text-right">${totalCgst.toFixed(2)}</td></tr>
+<tr><td>Add: SGST</td><td class="text-right">${totalSgst.toFixed(2)}</td></tr>
+<tr><td>Add: IGST</td><td class="text-right">${totalIgst.toFixed(2)}</td></tr>
+<tr><td class="font-bold">Total Amount After Tax</td><td class="font-bold text-right">${finalAmount.toFixed(2)}</td></tr>
 </table>
 </td>
 </tr>
 
 <tr><td colspan="16">GST Payable on Reverse Charge: No</td></tr>
 
-<tr style="height:25mm;">
-<td colspan="8" class="text-center" style="border-right:1px solid #000; vertical-align:bottom;">(Common Seal)</td>
+<tr style="height:20mm;">
+<td colspan="8" class="text-center" style="vertical-align:bottom;">(Common Seal)</td>
 <td colspan="8" class="text-center" style="vertical-align:bottom;"><b>For, ${companyProfile.company_name}</b><br><br>Authorised Signatory</td>
 </tr>
+
+</table>
+</body></html>
 `);
 
-        printWindow.document.write(`</table></div></body></html>`);
         printWindow.document.close();
-        setTimeout(()=>printWindow.print(),250);
+        setTimeout(()=>printWindow.print(),200);
 
-    } catch (e) {
-        alert(e.message);
-    }
+    } catch(err) { alert(err.message); }
 }
+
 
 function convertAmountToWords(amount) {
     // --- THIS IS THE KEY FIX FOR NEGATIVE NUMBERS ---
