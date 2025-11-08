@@ -4663,6 +4663,10 @@ async function printCurrentInvoice() {
     }
 }
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
+    // === FIX: Define constant immediately at function start ===
+    const MIN_ROWS_TO_DISPLAY = 15; 
+    // =========================================================
+    
     try {
         const [invoiceRes, companyProfile] = await Promise.all([
             apiFetch(`${API}/invoices/${invoiceIdToPrint}`),
@@ -4799,7 +4803,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             </td>
         </tr>
         <tr>
-            <td colspan="16" class="invoice-title-bar">${invoiceData.invoice_type.replace(/_/g, ' ')}</td>
+            <td colspan="16" class="invoice-title-bar">${invoiceData.invoice_type.replace(/_/g, ' ')}</div></td>
         </tr>
         `;
         
@@ -4815,9 +4819,9 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                     <tr><td class="detail-label">State</td><td class="detail-value">: ${invoiceData.customer_state || ''}, Code: ${invoiceData.customer_state_code || ''}</td><td class="detail-label font-bold">Place of Supply</td><td class="detail-value">: ${invoiceData.place_of_supply_state || ''}, Code: ${invoiceData.place_of_supply_state_code || ''}</td></tr>
                 </table>
             </td>
-            <td colspan="8" style="padding: 0; border-left: none;">
+            <td colspan="8" style="padding: 0; border-left: 1px solid #000;">
                 <table class="detail-grid">
-                    <tr><td colspan="2" class="text-center font-bold" style="border-left: 1px solid #000; border-bottom: 1px solid #000;">Details of Consignee/Shipped To:</td></tr>
+                    <tr><td colspan="2" class="text-center font-bold" style="border-bottom: 1px solid #000;">Details of Consignee/Shipped To:</td></tr>
                     <tr><td class="detail-label" style="width: 30%;">Name</td><td class="detail-value">: ${invoiceData.consignee_name}</td></tr>
                     <tr><td class="detail-label">Address</td><td class="address-cell">: ${consigneeAddress}</td></tr>
                     <tr><td class="detail-label">GSTIN</td><td class="detail-value">: ${invoiceData.consignee_gstin || 'N/A'}</td></tr>
@@ -4832,23 +4836,23 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         <tr>
             <td colspan="8" style="padding: 0; border-top: none; border-bottom: 1px solid #000;">
                 <table class="detail-grid">
-                    <tr><td colspan="2" class="text-center font-bold" style="border: 1px solid #000; border-left: none; border-top: none; border-bottom: 1px solid #000;">Details of Receiver / Billed To :</td></tr>
+                    <tr><td colspan="2" class="text-center font-bold" style="border-bottom: 1px solid #000;">Details of Receiver / Billed To :</td></tr>
                     <tr><td class="detail-label" style="width: 30%;">Name</td><td class="detail-value">: ${invoiceData.customer_name}</td></tr>
                     <tr><td class="detail-label">Address</td><td class="address-cell">: ${customerAddress}</td></tr>
                     <tr><td class="detail-label">GSTIN</td><td class="detail-value">: ${invoiceData.customer_gstin || 'N/A'}</td></tr>
                     <tr><td class="detail-label">State</td><td class="detail-value">: ${invoiceData.customer_state || ''}, Code: ${invoiceData.customer_state_code || ''}</td></tr>
                 </table>
             </td>
-            <td colspan="8" style="padding: 0; border-top: none; border-left: none; border-bottom: 1px solid #000;">
+            <td colspan="8" style="padding: 0; border-top: none; border-left: 1px solid #000; border-bottom: 1px solid #000;">
                 <table class="detail-grid">
-                    <tr><td colspan="4" style="padding: 1mm 1.5mm;">
+                    <tr><td colspan="2" style="padding: 1mm 1.5mm;">
                         <span class="font-bold">PH:</span> ${invoiceData.consignee_phone || invoiceData.customer_phone || ''}
                     </td></tr>
-                    <tr><td colspan="4" style="padding: 1mm 1.5mm; border-top: 1px solid #000;">
+                    <tr><td colspan="2" style="padding: 1mm 1.5mm; border-top: 1px solid #000;">
                         <span class="font-bold">GSTIN:</span> ${companyProfile.gstin}
                     </td></tr>
-                    <tr><td colspan="4" style="padding: 1mm 1.5mm; border-top: 1px solid #000;">
-                       <span class="font-bold">State:</span> ${companyProfile.state}, <span class="font-bold">Code:</span> ${companyProfile.state_code}
+                    <tr><td colspan="2" style="padding: 1mm 1.5mm; border-top: 1px solid #000;">
+                       <span class="font-bold">State:</span> ${companyProfile.state}, Code: ${companyProfile.state_code}
                     </td></tr>
                 </table>
             </td>
@@ -4879,8 +4883,8 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
 
         // --- 5. Item Rows and Enforced Height ---
         mainHtml += `<tr><td colspan="16" class="enforced-height-cell">`;
-        mainHtml += `<div class="items-container">`;
-        mainHtml += `<table class="items-table" style="height: 100%;"><tbody>`;
+        // Inner table ensures item cells still have borders between them
+        mainHtml += `<table class="items-table" style="width: 100%; height: 100%;"><tbody>`;
         
         invoiceData.line_items.forEach((item, index) => {
             const quantity = parseFloat(item.quantity) || 0;
@@ -4916,11 +4920,10 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
              mainHtml += `<tr><td style="height:3mm;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
         }
 
-        mainHtml += `</tbody></table></div>`;
+        mainHtml += `</tbody></table>`;
         mainHtml += `</td></tr>`; // Close enforced-height-cell
 
         // --- 6. Items Footer (Totals Row) ---
-        // This row MUST be outside the enforced height cell, as it's the permanent footer of the item section.
         mainHtml += `
         <tr class="font-bold">
             <td colspan="4" class="text-right">Total</td>
