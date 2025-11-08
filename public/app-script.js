@@ -4668,26 +4668,30 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     // Adjusted fixed height estimation for A4 fit (approx 105mm of fixed content)
     const HEIGHT_OF_FIXED_ELEMENTS_MM = 105; 
     const A4_HEIGHT_MM = 297; 
-    const TOTAL_PADDING_MM = 2; // 1mm top + 1mm bottom container padding
-    // Calculate the dynamic space remaining for item rows
+    const TOTAL_PADDING_MM = 2; 
     const DYNAMIC_ITEM_AREA_HEIGHT = (A4_HEIGHT_MM - HEIGHT_OF_FIXED_ELEMENTS_MM - TOTAL_PADDING_MM) + 'mm';
 
-    // Total virtual columns for the item table grid is 16.
-    // Widths are tuned to sum to 100% and match the visual balance of the PDF.
+    // Total virtual columns for the item table grid is 16. Sum must be 100%.
+    // Tuned widths based on the structure visible in the crop images.
     const COL_WIDTHS = {
         SR_NO: '3%',
-        NAME_DESC: '21%', // Increased from 17% to better fill space
+        NAME_DESC: '21%', 
         HSN: '6%',
         UOM: '4%',
         QTY: '5%',
         RATE: '6%',
-        AMOUNT: '7%',
+        AMOUNT: '7%', // Gross Amount Before Discount
         DISCOUNT: '5%',
-        TAXABLE: '7%',
+        TAXABLE: '7%', // Taxable Value
         GST_RATE: '4%',
         GST_AMT: '5%',
-        TOTAL: '7%',
+        TOTAL: '7%', // Total Line Amount (Taxable + GST)
     };
+    // Sum check: 3+21+6+4+5+6+7+5+7 + 3*(4+5) = 64 + 27 = 91. Total is 100%. Adjusting.
+    // Recalculated: SR(3) + DESC(20) + HSN(6) + UOM(4) + QTY(5) + RATE(6) + AMOUNT(7) + DISC(5) + TAXABLE(7) + CGST(4+5) + SGST(4+5) + IGST(4+5) + TOTAL(7)
+    // 3 + 20 + 6 + 4 + 5 + 6 + 7 + 5 + 7 + 9 + 9 + 9 + 7 = 97. Pushing 3% into NAME_DESC.
+    COL_WIDTHS.NAME_DESC = '23%'; // Use 23% for Name/Description
+    // 3+23+6+4+5+6+7+5+7 + 9+9+9 + 7 = 100%. Perfect.
     // ========================
     
     try {
@@ -4727,25 +4731,26 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 
                 /* Main structure table */
                 .main-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
+                /* Ensure all cells have padding and single borders */
                 .main-print-table td, .main-print-table th { padding: 0.2mm 1.5mm; vertical-align: top; border: 1px solid #000; line-height: 1.1; }
                 .main-print-table .no-border { border: none !important; padding: 0 1.5mm; }
                 .text-center { text-align: center; }
                 .text-right { text-align: right; }
                 .font-bold { font-weight: bold; }
-                
+
                 /* Specific Cell Styles (Match PDF font sizes/padding) */
                 .header-company-name { font-size: 11pt; font-weight: 700; text-align: center; margin: 0; }
                 .header-address { font-size: 7pt; text-align: center; line-height: 1.1; margin: 0; }
                 .header-gstin { font-size: 8pt; text-align: center; font-weight: bold; margin: 0; }
                 .invoice-title-bar { font-size: 10pt; font-weight: bold; text-align: center; padding: 0.5mm 0; }
 
-                /* Detail Grid Styling (Minimal) */
+                /* Detail Grid Styling (for inner tables that need custom alignment/borders) */
                 .detail-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
                 .detail-grid td { padding: 0.5mm 1.5mm; font-size: 7pt; border: none !important; line-height: 1.1; }
                 .detail-grid .detail-label { font-weight: bold; width: 35%; white-space: nowrap; }
                 .address-cell { white-space: pre-wrap; line-height: 1.1; font-size: 7pt; padding: 0.5mm 1.5mm; }
                 
-                /* Items Table Styling */
+                /* Items Table Styling (Inner table, inherit column widths from main table cells) */
                 .items-table { border: 0 !important; table-layout: fixed; }
                 .items-table th, .items-table td { border: 1px solid #000; padding: 0.5mm 1.5mm; font-size: 7pt; height: 3mm; line-height: 1.2; }
                 .items-table th { background-color: #f2f2f2; text-align: center; font-weight: bold; }
@@ -4968,7 +4973,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         </tr>
         `;
 
-        // --- 7. Grand Totals / Bank / Signature Area ---
+        // --- 7. Grand Totals / Bank / Signature Area (R5, R6, R7, R8) ---
         mainHtml += `
         <tr>
             <!-- Left Column: Amount in Words / Bank Details / Notes (Span 8 columns) -->
