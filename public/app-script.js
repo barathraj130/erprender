@@ -4153,41 +4153,38 @@ function closeInvoiceModal() {
     const form = document.getElementById("invoiceForm");
     if (form) form.reset();
 
-    // Use optional chaining for safe access (prevents Uncaught TypeError if ID is missing)
-    document.getElementById("invLineItemsTableBody")?.innerHTML = "";
-    document.getElementById("invSubtotal")?.textContent = "0.00";
-    document.getElementById("invTotalCGST")?.textContent = "0.00";
-    document.getElementById("invTotalSGST")?.textContent = "0.00";
-    document.getElementById("invTotalIGST")?.textContent = "0.00";
-    
-    // Resetting potentially missing display elements safely:
-    document.getElementById("invReturnsAmountDisplay")?.textContent = "0.00"; 
-    document.getElementById("invDiscountAmountDisplay")?.textContent = "0.00"; 
-    
-    document.getElementById("invGrandTotal")?.textContent = "0.00";
-    document.getElementById("inv_customer_name_display")?.value = "";
-    document.getElementById("inv_customer_address_display")?.value = "";
-    document.getElementById("inv_customer_gstin_display")?.value = "";
-    document.getElementById("inv_customer_statecode_display")?.value = "";
+    document.getElementById("invLineItemsTableBody").innerHTML = "";
+    document.getElementById("invSubtotal").textContent = "0.00";
+    document.getElementById("invTotalCGST").textContent = "0.00";
+    document.getElementById("invTotalSGST").textContent = "0.00";
+    document.getElementById("invTotalIGST").textContent = "0.00";
+    document.getElementById("invReturnsAmountDisplay").textContent = "0.00";
+    document.getElementById("invGrandTotal").textContent = "0.00";
+    document.getElementById("inv_customer_name_display").value = "";
+    document.getElementById("inv_customer_address_display").value = "";
+    document.getElementById("inv_customer_gstin_display").value = "";
+    document.getElementById("inv_customer_statecode_display").value = "";
 
-    document.getElementById("inv_invoice_type")?.value = "TAX_INVOICE";
-    document.getElementById("inv_cgst_rate_overall")?.value = "2.5";
-    document.getElementById("inv_sgst_rate_overall")?.value = "2.5";
-    document.getElementById("inv_igst_rate_overall")?.value = "0";
-    document.getElementById("inv_party_bill_returns_amount")?.value = "0";
+    document.getElementById("inv_invoice_type").value = "TAX_INVOICE";
+    document.getElementById("inv_cgst_rate_overall").value = "2.5";
+    document.getElementById("inv_sgst_rate_overall").value = "2.5";
+    document.getElementById("inv_igst_rate_overall").value = "0";
+    document.getElementById("inv_party_bill_returns_amount").value = "0";
     const sameAsCustCheckbox = document.getElementById("inv_same_as_customer");
     if(sameAsCustCheckbox) sameAsCustCheckbox.checked = false; 
-    document.getElementById("inv_status")?.value = "Draft";
-    document.getElementById("inv_reverse_charge")?.value = "No";
-    document.getElementById("inv_payment_being_made_now")?.value = "0.00";
-    
-    document.getElementById("inv_cumulative_paid_display")?.textContent = "0.00"; 
+    document.getElementById("inv_status").value = "Draft";
+    document.getElementById("inv_reverse_charge").value = "No";
+    document.getElementById("inv_payment_being_made_now").value = "0.00";
+    const cumulativePaidDisplay = document.getElementById(
+        "inv_cumulative_paid_display",
+    );
+    if (cumulativePaidDisplay) cumulativePaidDisplay.textContent = "0.00";
 
-    // Re-run toggle functions to ensure UI state is visually correct
     toggleGstFields();
     togglePartyBillReturnsField();
     toggleConsigneeFields();
 }
+
 
 async function populateUserDropdownForInv() {
     try {
@@ -4632,7 +4629,39 @@ async function handleInvoiceSubmit(e) {
         alert("Error saving document: " + error.message);
     }
 }
-// REPLACE this entire function in app-script.js
+async function deleteInvoice(invoiceId) {
+    if (!confirm("Are you sure you want to delete this invoice and all its related financial records and stock movements? This CANNOT be undone.")) return;
+    try {
+        const res = await apiFetch(`${API}/invoices/${invoiceId}`, { method: "DELETE" });
+        if(!res) return;
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || `Failed to delete: ${res.statusText}`);
+        alert(result.message || "Invoice deleted");
+        await loadInvoices();
+        await loadAllTransactions(); 
+        await loadProducts();
+        await loadUsers();
+        loadCustomerSummaries(); 
+    } catch (error) { console.error("Error deleting invoice:", error); alert("Error: " + error.message); }
+}
+async function viewInvoice(invoiceId) {
+    openInvoiceModal(invoiceId);
+}
+
+async function printCurrentInvoiceById(invoiceIdFromList) {
+    if(invoiceIdFromList) {
+        await generateAndShowPrintableInvoice(invoiceIdFromList);
+    } else {
+        alert("Invalid Invoice ID provided for printing.");
+    }
+}
+async function printCurrentInvoice() {
+    if (editingInvoiceId) {
+        await generateAndShowPrintableInvoice(editingInvoiceId);
+    } else {
+        alert("Please save the invoice first or ensure an invoice is loaded in the modal to print.");
+    }
+}
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     try {
         const [invoiceRes, companyProfile] = await Promise.all([
@@ -4648,8 +4677,9 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             return;
         }
         
-        let watermarkText = companyProfile.company_name.toUpperCase();
+        const watermarkText = companyProfile.company_name.toUpperCase();
         if (watermarkText.includes("ADVENTURER EXPORT")) {
+            // If the default profile is used, assume the user meant the company name shown in the screenshot
             watermarkText = "JBS KNITWEAR"; 
         }
 
@@ -4661,20 +4691,13 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
 
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         
-        // --- REFINED CSS FOR READABILITY AND SINGLE PAGE FIT ---
+        // --- REVISED CSS FOR SINGLE PAGE FIT AND WATERMARK ---
         printWindow.document.write(`
             <style>
-                /* Base font size increased from 8pt to 9pt for better readability */
-                body { font-family: "Arial", sans-serif; font-size: 9pt; margin: 0; color: #000; }
+                body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; }
                 @page { size: A4; margin: 0; }
-                .print-container { width: 210mm; padding: 5mm; box-sizing: border-box; position: relative; } 
-                .invoice-box { 
-                    border: 1px solid #000; 
-                    padding: 2mm; 
-                    box-sizing: border-box; 
-                    width: 100%;
-                    min-height: 287mm; /* Ensure min-height to push content down for single page */
-                }
+                .print-container { width: 210mm; padding: 5mm; box-sizing: border-box; position: relative; z-index: 1; } 
+                .invoice-box { border: 1px solid #000; padding: 2mm; box-sizing: border-box; position: relative; z-index: 2; }
                 
                 /* WATERMARK STYLE */
                 .watermark {
@@ -4682,56 +4705,36 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                     top: 50%;
                     left: 50%;
                     transform: translate(-50%, -50%) rotate(-45deg);
-                    color: rgba(0, 0, 0, 0.08);
+                    color: rgba(0, 0, 0, 0.08); /* Very light gray/black */
                     font-size: 50pt;
                     font-weight: bold;
                     pointer-events: none; 
-                    z-index: 0;
+                    z-index: 0; /* Positioned behind the invoice-box */
                     width: 150%;
                     text-align: center;
                     white-space: nowrap;
                 }
-                
+                /* END WATERMARK STYLE */
+
                 .text-center { text-align: center; } .text-right { text-align: right; } .font-bold { font-weight: bold; }
                 
-                .company-name { font-size: 14pt; font-weight: bold; margin-bottom: 1mm; } /* Restored size */
-                .invoice-title { font-size: 12pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; margin: 1.5mm 0; } /* Adjusted padding/margin */
+                .company-name { font-size: 14pt; font-weight: bold; margin-bottom: 1mm; } 
+                .invoice-title { font-size: 12pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; margin: 1mm 0; } 
                 
-                .header-info-grid {
-                    width: 100%;
-                    border-collapse: collapse;
-                    border-bottom: 1px solid #000;
-                    margin-bottom: 1mm;
-                }
-                .header-info-grid td {
-                    padding: 0.8mm 1mm; /* Increased padding */
-                    font-size: 9pt; /* Increased size */
-                    vertical-align: top;
-                }
-                .header-info-grid .left-side { width: 50%; border-right: 1px solid #000; }
-                .header-info-grid .right-side { width: 50%; }
-
-                .details-table { width: 100%; border-collapse: collapse; }
-                .details-table td { padding: 0.4mm 0; font-size: 9pt; } /* Increased padding/size */
+                .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; }
                 .label { font-weight: bold; }
                 
-                .address-grid { 
-                    border-top: 1px solid #000; 
-                    border-bottom: 1px solid #000; 
-                    width: 100%; 
-                    border-collapse: collapse; 
-                    margin-bottom: 2mm; /* Increased margin */
-                }
-                .address-grid td { width: 50%; padding: 2mm; vertical-align: top; border: none; } /* Increased padding */
+                .address-grid { margin-top: 1mm; border-top: 1px solid #000; border-bottom: 1px solid #000; width: 100%; border-collapse: collapse; }
+                .address-grid td { width: 50%; padding: 1mm 2mm; vertical-align: top; border: none; } 
                 .address-grid td:first-child { border-right: 1px solid #000; }
                 .address-title { text-decoration: underline; font-weight: bold; margin-bottom: 1mm; display: block; }
                 
-                .items-table { width: 100%; border-collapse: collapse; }
-                .items-table th, .items-table td { border: 1px solid #000; font-size: 9pt; padding: 1mm; word-wrap: break-word; line-height: 1.3; } /* Increased padding/size */
+                .items-table { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 0.8mm 1mm; word-wrap: break-word; line-height: 1.2; } 
                 .items-table thead th { background-color: #f2f2f2; }
                 .items-table tfoot td { font-weight: bold; }
                 
-                .footer-section { padding-top: 3mm; } /* Increased padding */
+                .footer-section { padding-top: 2mm; }
                 .totals-summary { width: 100%; border-collapse: collapse; margin-bottom: 1mm;}
                 .totals-summary td { padding: 0.5mm 2mm; border: none; } 
                 .totals-summary tr:first-child td { border-top: 1px solid #000; }
@@ -4743,7 +4746,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .signature { text-align: right; }
             </style>
         `);
-        // --- END REFINED CSS ---
+        // --- END REVISED CSS ---
 
         printWindow.document.write('</head><body><div class="print-container">');
         
@@ -4752,7 +4755,8 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         
         printWindow.document.write('<div class="invoice-box">');
         
-        // --- HEADER HTML STRUCTURE (Uses 9pt size) ---
+        // ... (Header HTML remains the same) ...
+
         let headerHtml = `
             <div class="text-center">
                 <div class="company-name">${companyProfile.company_name}</div>
@@ -4760,48 +4764,25 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 <div class="font-bold">GSTIN No.: ${companyProfile.gstin}</div>
             </div>
             <div class="invoice-title text-center">${invoiceData.invoice_type.replace(/_/g, ' ')}</div>
-
-            <table class="header-info-grid">
-                <tr>
-                    <td class="left-side">
-                        <table class="details-table">
-                            <tr>
-                                <td class="label" style="width: 35%;">Invoice No:</td>
-                                <td style="width: 65%;">${invoiceData.invoice_number}</td>
-                            </tr>
-                            <tr>
-                                <td class="label">Invoice Date:</td>
-                                <td>${new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td>
-                            </tr>
-                            <tr>
-                                <td class="label">State:</td>
-                                <td>${companyProfile.state}, <span class="label">State Code:</span> ${companyProfile.state_code}</td>
-                            </tr>
+            <table style="width:100%; font-size:8.5pt; border-collapse: collapse;">
+                 <tr>
+                    <td style="width:50%; padding: 1mm 0;">
+                        <table class="details-table" style="width:100%;">
+                            <tr><td class="label" style="width:30%">Invoice No:</td><td>${invoiceData.invoice_number}</td></tr>
+                            <tr><td class="label">Invoice Date:</td><td>${new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td></tr>
+                            <tr><td class="label">State:</td><td>${companyProfile.state}, <span class="label">State Code:</span> ${companyProfile.state_code}</td></tr>
                         </table>
                     </td>
-                    <td class="right-side">
-                         <table class="details-table">
-                            <tr>
-                                <td class="label" style="width: 45%;">Transportation Mode:</td>
-                                <td style="width: 55%;">${invoiceData.transportation_mode || 'N/A'}</td>
-                            </tr>
-                            <tr>
-                                <td class="label">Vehicle Number:</td>
-                                <td>${invoiceData.vehicle_number || 'N/A'}</td>
-                            </tr>
-                            <tr>
-                                <td class="label">Date of Supply:</td>
-                                <td>${invoiceData.date_of_supply ? new Date(invoiceData.date_of_supply).toLocaleDateString('en-GB') : new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td>
-                            </tr>
-                            <tr>
-                                <td class="label">Place of Supply:</td>
-                                <td>${invoiceData.place_of_supply_state}, <span class="label">State Code:</span> ${invoiceData.place_of_supply_state_code}</td>
-                            </tr>
+                    <td style="width:50%; padding: 1mm 0;">
+                         <table class="details-table" style="width:100%;">
+                            <tr><td class="label" style="width:45%">Transportation Mode:</td><td>${invoiceData.transportation_mode || 'N/A'}</td></tr>
+                            <tr><td class="label">Vehicle Number:</td><td>${invoiceData.vehicle_number || 'N/A'}</td></tr>
+                            <tr><td class="label">Date of Supply:</td><td>${invoiceData.date_of_supply ? new Date(invoiceData.date_of_supply).toLocaleDateString('en-GB') : new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td></tr>
+                            <tr><td class="label">Place of Supply:</td><td>${invoiceData.place_of_supply_state}, <span class="label">State Code:</span> ${invoiceData.place_of_supply_state_code}</td></tr>
                         </table>
                     </td>
                 </tr>
             </table>
-
             <table class="address-grid">
                 <tr>
                     <td>
@@ -4821,7 +4802,6 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                     </td>
                 </tr>
             </table>`;
-        // --- END REVISED HEADER HTML STRUCTURE ---
 
         let itemsHtml = `<table class="items-table"><thead><tr><th style="width:3%">Sr.</th><th style="width:28%">Name of Product/Service</th><th style="width:8%">HSN</th><th style="width:5%">UOM</th><th class="text-right" style="width:7%">Qty</th><th class="text-right" style="width:9%">Rate</th><th class="text-right" style="width:10%">Amount</th><th class="text-right" style="width:10%">Taxable</th><th class="text-right" style="width:8%">GST</th><th class="text-right" style="width:12%">Total</th></tr></thead><tbody>`;
         let totalQty = 0, totalTaxable = 0, totalCgst = 0, totalSgst = 0, totalIgst = 0, grandTotal = 0;
@@ -4857,8 +4837,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             </tr>`;
         });
         
-        // Use a slightly larger max row count to utilize space
-        const MAX_ROWS = 15; 
+        const MAX_ROWS = 12; 
         for (let i = invoiceData.line_items.length; i < MAX_ROWS; i++) {
              itemsHtml += `<tr><td style="height:1.2em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
         }
