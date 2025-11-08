@@ -4153,38 +4153,41 @@ function closeInvoiceModal() {
     const form = document.getElementById("invoiceForm");
     if (form) form.reset();
 
-    document.getElementById("invLineItemsTableBody").innerHTML = "";
-    document.getElementById("invSubtotal").textContent = "0.00";
-    document.getElementById("invTotalCGST").textContent = "0.00";
-    document.getElementById("invTotalSGST").textContent = "0.00";
-    document.getElementById("invTotalIGST").textContent = "0.00";
-    document.getElementById("invReturnsAmountDisplay").textContent = "0.00";
-    document.getElementById("invGrandTotal").textContent = "0.00";
-    document.getElementById("inv_customer_name_display").value = "";
-    document.getElementById("inv_customer_address_display").value = "";
-    document.getElementById("inv_customer_gstin_display").value = "";
-    document.getElementById("inv_customer_statecode_display").value = "";
+    // Use optional chaining for safe access (prevents Uncaught TypeError if ID is missing)
+    document.getElementById("invLineItemsTableBody")?.innerHTML = "";
+    document.getElementById("invSubtotal")?.textContent = "0.00";
+    document.getElementById("invTotalCGST")?.textContent = "0.00";
+    document.getElementById("invTotalSGST")?.textContent = "0.00";
+    document.getElementById("invTotalIGST")?.textContent = "0.00";
+    
+    // Resetting potentially missing display elements safely:
+    document.getElementById("invReturnsAmountDisplay")?.textContent = "0.00"; 
+    document.getElementById("invDiscountAmountDisplay")?.textContent = "0.00"; 
+    
+    document.getElementById("invGrandTotal")?.textContent = "0.00";
+    document.getElementById("inv_customer_name_display")?.value = "";
+    document.getElementById("inv_customer_address_display")?.value = "";
+    document.getElementById("inv_customer_gstin_display")?.value = "";
+    document.getElementById("inv_customer_statecode_display")?.value = "";
 
-    document.getElementById("inv_invoice_type").value = "TAX_INVOICE";
-    document.getElementById("inv_cgst_rate_overall").value = "2.5";
-    document.getElementById("inv_sgst_rate_overall").value = "2.5";
-    document.getElementById("inv_igst_rate_overall").value = "0";
-    document.getElementById("inv_party_bill_returns_amount").value = "0";
+    document.getElementById("inv_invoice_type")?.value = "TAX_INVOICE";
+    document.getElementById("inv_cgst_rate_overall")?.value = "2.5";
+    document.getElementById("inv_sgst_rate_overall")?.value = "2.5";
+    document.getElementById("inv_igst_rate_overall")?.value = "0";
+    document.getElementById("inv_party_bill_returns_amount")?.value = "0";
     const sameAsCustCheckbox = document.getElementById("inv_same_as_customer");
     if(sameAsCustCheckbox) sameAsCustCheckbox.checked = false; 
-    document.getElementById("inv_status").value = "Draft";
-    document.getElementById("inv_reverse_charge").value = "No";
-    document.getElementById("inv_payment_being_made_now").value = "0.00";
-    const cumulativePaidDisplay = document.getElementById(
-        "inv_cumulative_paid_display",
-    );
-    if (cumulativePaidDisplay) cumulativePaidDisplay.textContent = "0.00";
+    document.getElementById("inv_status")?.value = "Draft";
+    document.getElementById("inv_reverse_charge")?.value = "No";
+    document.getElementById("inv_payment_being_made_now")?.value = "0.00";
+    
+    document.getElementById("inv_cumulative_paid_display")?.textContent = "0.00"; 
 
+    // Re-run toggle functions to ensure UI state is visually correct
     toggleGstFields();
     togglePartyBillReturnsField();
     toggleConsigneeFields();
 }
-
 
 async function populateUserDropdownForInv() {
     try {
