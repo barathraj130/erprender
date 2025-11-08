@@ -4684,37 +4684,45 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         }
 
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
+        
+        // --- REVISED CSS FOR SINGLE PAGE FIT ---
         printWindow.document.write(`
             <style>
-                body { font-family: "Arial", sans-serif; font-size: 9pt; margin: 0; color: #000; }
+                body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; }
                 @page { size: A4; margin: 0; }
-                .print-container { width: 210mm; height: 297mm; padding: 5mm; box-sizing: border-box; }
-                .invoice-box { border: 1px solid #000; padding: 2mm; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
-                .main-table { width: 100%; height: 100%; border-collapse: collapse; display: flex; flex-direction: column; }
-                .main-table > thead, .main-table > tfoot { flex-shrink: 0; }
-                .main-table > tbody { flex-grow: 1; }
-                td, th { padding: 1mm; vertical-align: top; }
+                .print-container { width: 210mm; padding: 5mm; box-sizing: border-box; } /* Removed fixed height 297mm */
+                .invoice-box { border: 1px solid #000; padding: 2mm; box-sizing: border-box; } /* Removed fixed height/flex */
                 .text-center { text-align: center; } .text-right { text-align: right; } .font-bold { font-weight: bold; }
-                .company-name { font-size: 16pt; font-weight: bold; }
-                .invoice-title { font-size: 14pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1.5mm 0; margin: 2mm 0; }
-                .details-table td { padding: 0.5mm 1mm; font-size: 9pt; }
+                
+                .company-name { font-size: 14pt; font-weight: bold; margin-bottom: 1mm; } /* Reduced size */
+                .invoice-title { font-size: 12pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; margin: 1mm 0; } /* Reduced size and padding */
+                
+                .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; }
                 .label { font-weight: bold; }
-                .address-grid { margin-top: 2mm; border-top: 1px solid #000; border-bottom: 1px solid #000; }
-                .address-grid td { width: 50%; padding: 2mm; vertical-align: top; }
+                
+                .address-grid { margin-top: 1mm; border-top: 1px solid #000; border-bottom: 1px solid #000; width: 100%; border-collapse: collapse; }
+                .address-grid td { width: 50%; padding: 1mm 2mm; vertical-align: top; border: none; } /* Reduced padding */
                 .address-grid td:first-child { border-right: 1px solid #000; }
                 .address-title { text-decoration: underline; font-weight: bold; margin-bottom: 1mm; display: block; }
-                .items-table { width: 100%; border-collapse: collapse; }
-                .items-table th, .items-table td { border: 1px solid #000; font-size: 9pt; padding: 1.5mm; word-wrap: break-word; }
+                
+                .items-table { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 0.8mm 1mm; word-wrap: break-word; line-height: 1.2; } /* Reduced padding/line height */
                 .items-table thead th { background-color: #f2f2f2; }
                 .items-table tfoot td { font-weight: bold; }
+                
                 .footer-section { padding-top: 2mm; }
-                .totals-summary { width: 50%; float: right; }
-                .totals-summary td { padding: 1mm 2mm; }
-                .grand-total td { font-weight: bold; border-top: 1px solid #000; }
-                .final-footer { display: flex; justify-content: space-between; align-items: flex-end; width: 100%; padding-top: 10mm; }
+                .totals-summary { width: 50%; float: right; border-collapse: collapse; margin-bottom: 1mm;}
+                .totals-summary td { padding: 0.5mm 2mm; border: none; } /* Reduced padding */
+                .totals-summary tr:first-child td { border-top: 1px solid #000; }
+                .totals-summary tr:last-child td { border-top: 1px solid #000; }
+                
+                .grand-total td { font-weight: bold; }
+                .final-footer { width: 100%; padding-top: 5mm; display: table; table-layout: fixed; } /* Use table layout for better print positioning */
+                .final-footer > div { display: table-cell; width: 50%; vertical-align: bottom; }
                 .signature { text-align: right; }
             </style>
         `);
+        // --- END REVISED CSS ---
 
         printWindow.document.write('</head><body><div class="print-container"><div class="invoice-box">');
         
@@ -4725,18 +4733,18 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 <div class="font-bold">GSTIN No.: ${companyProfile.gstin}</div>
             </div>
             <div class="invoice-title text-center">${invoiceData.invoice_type.replace(/_/g, ' ')}</div>
-            <table style="width:100%; font-size:9pt;">
+            <table style="width:100%; font-size:8.5pt; border-collapse: collapse;">
                  <tr>
-                    <td style="width:50%">
-                        <table class="details-table">
-                            <tr><td class="label">Invoice No:</td><td>${invoiceData.invoice_number}</td></tr>
+                    <td style="width:50%; padding: 1mm 0;">
+                        <table class="details-table" style="width:100%;">
+                            <tr><td class="label" style="width:30%">Invoice No:</td><td>${invoiceData.invoice_number}</td></tr>
                             <tr><td class="label">Invoice Date:</td><td>${new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td></tr>
                             <tr><td class="label">State:</td><td>${companyProfile.state}, <span class="label">State Code:</span> ${companyProfile.state_code}</td></tr>
                         </table>
                     </td>
-                    <td style="width:50%">
-                         <table class="details-table">
-                            <tr><td class="label">Transportation Mode:</td><td>${invoiceData.transportation_mode || 'N/A'}</td></tr>
+                    <td style="width:50%; padding: 1mm 0;">
+                         <table class="details-table" style="width:100%;">
+                            <tr><td class="label" style="width:45%">Transportation Mode:</td><td>${invoiceData.transportation_mode || 'N/A'}</td></tr>
                             <tr><td class="label">Vehicle Number:</td><td>${invoiceData.vehicle_number || 'N/A'}</td></tr>
                             <tr><td class="label">Date of Supply:</td><td>${invoiceData.date_of_supply ? new Date(invoiceData.date_of_supply).toLocaleDateString('en-GB') : new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td></tr>
                             <tr><td class="label">Place of Supply:</td><td>${invoiceData.place_of_supply_state}, <span class="label">State Code:</span> ${invoiceData.place_of_supply_state_code}</td></tr>
@@ -4764,7 +4772,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 </tr>
             </table>`;
 
-        let itemsHtml = `<table class="items-table"><thead><tr><th style="width:4%">Sr.</th><th style="width:30%">Name of Product/Service</th><th style="width:8%">HSN</th><th style="width:6%">UOM</th><th class="text-right" style="width:7%">Qty</th><th class="text-right" style="width:9%">Rate</th><th class="text-right" style="width:10%">Amount</th><th class="text-right" style="width:9%">Taxable</th><th class="text-right" style="width:8%">GST</th><th class="text-right" style="width:10%">Total</th></tr></thead><tbody>`;
+        let itemsHtml = `<table class="items-table"><thead><tr><th style="width:3%">Sr.</th><th style="width:28%">Name of Product/Service</th><th style="width:8%">HSN</th><th style="width:5%">UOM</th><th class="text-right" style="width:7%">Qty</th><th class="text-right" style="width:9%">Rate</th><th class="text-right" style="width:10%">Amount</th><th class="text-right" style="width:10%">Taxable</th><th class="text-right" style="width:8%">GST</th><th class="text-right" style="width:12%">Total</th></tr></thead><tbody>`;
         let totalQty = 0, totalTaxable = 0, totalCgst = 0, totalSgst = 0, totalIgst = 0, grandTotal = 0;
         
         invoiceData.line_items.forEach((item, index) => {
@@ -4774,29 +4782,35 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             const igst_amount = parseFloat(item.igst_amount) || 0;
             const gstAmount = cgst_amount + sgst_amount + igst_amount;
             
-            totalQty += parseFloat(item.quantity) || 0;
+            // Note: quantity is stored as positive for sales, negative for returns. The table displays based on that.
+            totalQty += parseFloat(item.quantity) || 0; 
             totalTaxable += taxable_value;
             totalCgst += cgst_amount;
             totalSgst += sgst_amount;
             totalIgst += igst_amount;
             grandTotal += parseFloat(item.line_total) || 0;
 
+            const quantityDisplay = (parseFloat(item.quantity) || 0).toFixed(2);
+            const amountCellDisplay = ((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)).toFixed(2);
+
             itemsHtml += `<tr>
                 <td class="text-center">${index + 1}</td>
                 <td>${item.description}</td>
                 <td class="text-center">${item.final_hsn_acs_code || ''}</td>
                 <td class="text-center">${item.final_unit_of_measure || ''}</td>
-                <td class="text-right">${(parseFloat(item.quantity) || 0).toFixed(2)}</td>
+                <td class="text-right">${quantityDisplay}</td>
                 <td class="text-right">${(parseFloat(item.unit_price) || 0).toFixed(2)}</td>
-                <td class="text-right">${((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)).toFixed(2)}</td>
+                <td class="text-right">${amountCellDisplay}</td>
                 <td class="text-right">${taxable_value.toFixed(2)}</td>
                 <td class="text-right">${gstAmount.toFixed(2)}</td>
                 <td class="text-right font-bold">${(parseFloat(item.line_total) || 0).toFixed(2)}</td>
             </tr>`;
         });
         
-        for (let i = invoiceData.line_items.length; i < 15; i++) {
-             itemsHtml += `<tr><td style="height:1.5em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+        // Dynamic padding: Use a maximum of 12 rows total, padding with empty rows if needed
+        const MAX_ROWS = 12; 
+        for (let i = invoiceData.line_items.length; i < MAX_ROWS; i++) {
+             itemsHtml += `<tr><td style="height:1.2em;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
         }
 
         itemsHtml += `</tbody><tfoot><tr>
@@ -4808,51 +4822,55 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             <td class="text-right font-bold">${grandTotal.toFixed(2)}</td>
         </tr></tfoot></table>`;
         
+        // --- Footer Totals (Consolidated) ---
+        const totalAmountBeforeTax = invoiceData.amount_before_tax || totalTaxable;
+        const totalAmountAfterTax = invoiceData.total_amount || grandTotal;
+
         let footerHtml = `
             <div class="footer-section">
-                <table>
+                <table style="width: 100%; border-collapse: collapse;">
                     <tr>
-                        <td style="width: 50%; vertical-align: top;">
-                            <div><span class="label">Total Amount in words:</span> <span class="font-bold" style="text-transform: uppercase;">${invoiceData.amount_in_words || convertAmountToWords(grandTotal) + ' RUPEES ONLY'}</span></div>
-                            <div style="margin-top: 5px;"><span class="label">Bundles:</span> <span class="font-bold">${invoiceData.bundles_count || 'N/A'}</span></div>
-                            <div style="margin-top: 10px;">
+                        <td style="width: 50%; vertical-align: top; padding: 0 1mm;">
+                            <div><span class="label">Total Amount in words:</span> <span class="font-bold" style="text-transform: uppercase;">${invoiceData.amount_in_words || convertAmountToWords(totalAmountAfterTax) + ' RUPEES ONLY'}</span></div>
+                            <div style="margin-top: 3mm;"><span class="label">Bundles:</span> <span class="font-bold">${invoiceData.bundles_count || 'N/A'}</span></div>
+                            <div style="margin-top: 5mm;">
                                 <span class="label" style="text-decoration: underline;">Bank Details:</span>
                                 <div><span class="label">BANK NAME:</span> ${companyProfile.bank_name}</div>
                                 <div><span class="label">A/C NO:</span> ${companyProfile.bank_account_no}</div>
                                 <div><span class="label">IFSC NO:</span> ${companyProfile.bank_ifsc_code}</div>
                             </div>
+                            <div style="margin-top: 5mm;"><span class="label">Notes:</span> ${invoiceData.notes || ''}</div>
                         </td>
-                        <td style="width: 50%; vertical-align: top;">
-                            <table class="totals-summary">
-                                <tr><td>Total Amount Before Tax</td><td class="text-right">${totalTaxable.toFixed(2)}</td></tr>
+                        <td style="width: 50%; vertical-align: top; padding: 0 1mm;">
+                            <table class="totals-summary" style="float:none; width: 100%;">
+                                <tr><td>Total Amount Before Tax</td><td class="text-right">${parseFloat(totalAmountBeforeTax).toFixed(2)}</td></tr>
                                 <tr><td>Add: CGST</td><td class="text-right">${totalCgst.toFixed(2)}</td></tr>
                                 <tr><td>Add: SGST</td><td class="text-right">${totalSgst.toFixed(2)}</td></tr>
                                 <tr><td>Add: IGST</td><td class="text-right">${totalIgst.toFixed(2)}</td></tr>
-                                <tr class="grand-total"><td>Total Amount After Tax</td><td class="text-right">${grandTotal.toFixed(2)}</td></tr>
+                                <tr class="grand-total"><td>Total Amount After Tax</td><td class="text-right">${parseFloat(totalAmountAfterTax).toFixed(2)}</td></tr>
                             </table>
+                            <div style="margin-top: 3mm;"><span class="label">GST Payable on Reverse Charge:</span> ${invoiceData.reverse_charge === 'Yes' ? 'Yes' : 'No'}</div>
                         </td>
                     </tr>
-                    <tr><td colspan="2" style="padding-top: 5mm;"><span class="label">GST Payable on Reverse Charge:</span> No</td></tr>
                 </table>
                 <div class="final-footer">
                     <div>(Common Seal)</div>
                     <div class="signature">
                         <div>Certified that the particulars given above are true & correct.</div>
-                        <div style="margin-top:15mm;" class="font-bold">For, ${companyProfile.company_name}</div>
+                        <div style="margin-top:10mm;" class="font-bold">For, ${companyProfile.company_name}</div>
                         <div style="margin-top:2mm;">Authorised Signatory</div>
                     </div>
                 </div>
             </div>`;
 
-        printWindow.document.write('<div class="main-table">' + headerHtml + itemsHtml + '</div>' + footerHtml);
+        printWindow.document.write(headerHtml + itemsHtml + footerHtml);
         printWindow.document.write('</div></div></body></html>');
         printWindow.document.close();
         printWindow.focus();
         
         setTimeout(() => {
             printWindow.print();
-            printWindow.close();
-        }, 250);
+        }, 500);
 
     } catch (error) {
         console.error("Error preparing invoice for print:", error);
