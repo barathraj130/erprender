@@ -4663,9 +4663,13 @@ async function printCurrentInvoice() {
     }
 }
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
-    // === FIX 1: Define constant for minimum rows ===
+    // === Define constants ===
     const MIN_ROWS_TO_DISPLAY = 15; 
-    // ===============================================
+    const HEIGHT_OF_FIXED_ELEMENTS_MM = 100; // Estimated height of header, meta, totals, and signature block (approx 100mm)
+    const A4_HEIGHT_MM = 297; 
+    const TOTAL_PADDING_MM = 2; // 1mm top + 1mm bottom container padding
+    const DYNAMIC_ITEM_AREA_HEIGHT = (A4_HEIGHT_MM - HEIGHT_OF_FIXED_ELEMENTS_MM - TOTAL_PADDING_MM) + 'mm';
+    // ========================
     
     try {
         const [invoiceRes, companyProfile] = await Promise.all([
@@ -4681,11 +4685,9 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             return;
         }
 
-        // === FIX 2: Safely calculate currentRowCount ===
         const currentRowCount = (invoiceData.line_items && Array.isArray(invoiceData.line_items))
             ? invoiceData.line_items.length
             : 0;
-        // ===============================================
 
         const printWindow = window.open('', '_blank', 'height=800,width=1000');
         if (!printWindow) {
@@ -4695,13 +4697,12 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
 
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         
-        // --- START NEW PRINT STYLES (MATCHING JBS KNITWEAR STYLE) ---
+        // --- START NEW PRINT STYLES (Optimized for Single Page) ---
         printWindow.document.write(`
             <style>
                 /* Base Styles for Print */
                 body { font-family: "Arial", sans-serif; font-size: 8pt; margin: 0 !important; padding: 0 !important; color: #000; } 
                 @page { size: A4; margin: 0; }
-                /* Enforce A4 dimensions for PDF output */
                 .print-container { width: 210mm; min-height: 297mm; padding: 1mm; box-sizing: border-box; }
                 .invoice-box { border: 1px solid #000; padding: 0mm; box-sizing: border-box; }
                 
@@ -4745,9 +4746,12 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .signature-area { width: 50%; text-align: center; }
                 .signature-area.consignee { border-right: 1px solid #000; }
                 
-                /* FIX: Enforce minimum cell height for the item table area to push footer down */
-                .enforced-height-cell { height: 180mm; padding: 0; }
-                .items-container { height: 100%; display: flex; flex-direction: column; }
+                /* DYNAMIC HEIGHT FIX */
+                .enforced-height-cell { 
+                    height: ${DYNAMIC_ITEM_AREA_HEIGHT}; 
+                    padding: 0; 
+                    vertical-align: top;
+                }
             </style>
         `);
         // --- END NEW PRINT STYLES ---
