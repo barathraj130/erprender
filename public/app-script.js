@@ -4663,132 +4663,398 @@ async function printCurrentInvoice() {
     }
 }
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
+    // === Define constants ===
+    const MIN_ROWS_TO_DISPLAY = 15; 
+    // Adjusted fixed height estimation for A4 fit (approx 105mm of fixed content)
+    const HEIGHT_OF_FIXED_ELEMENTS_MM = 105; 
+    const A4_HEIGHT_MM = 297; 
+    const TOTAL_PADDING_MM = 2; // 1mm top + 1mm bottom container padding
+    // Calculate the dynamic space remaining for item rows
+    const DYNAMIC_ITEM_AREA_HEIGHT = (A4_HEIGHT_MM - HEIGHT_OF_FIXED_ELEMENTS_MM - TOTAL_PADDING_MM) + 'mm';
+
+    // Total virtual columns for the item table grid is 16.
+    // Widths are tuned to sum to 100% and match the visual balance of the PDF.
+    const COL_WIDTHS = {
+        SR_NO: '3%',
+        NAME_DESC: '21%', // Increased from 17% to better fill space
+        HSN: '6%',
+        UOM: '4%',
+        QTY: '5%',
+        RATE: '6%',
+        AMOUNT: '7%',
+        DISCOUNT: '5%',
+        TAXABLE: '7%',
+        GST_RATE: '4%',
+        GST_AMT: '5%',
+        TOTAL: '7%',
+    };
+    // ========================
+    
     try {
-        const [invoiceRes] = await Promise.all([
-            apiFetch(`${API}/invoices/${invoiceIdToPrint}`)
+        const [invoiceRes, companyProfile] = await Promise.all([
+            apiFetch(`${API}/invoices/${invoiceIdToPrint}`),
+            loadBusinessProfile()
         ]);
 
         if (!invoiceRes || !invoiceRes.ok) throw new Error("Failed to fetch invoice data.");
         const invoiceData = await invoiceRes.json();
+        
+        if (!companyProfile || !companyProfile.company_name) {
+            alert("Company profile could not be loaded. Please update it in the Company section.");
+            return;
+        }
+
+        const currentRowCount = (invoiceData.line_items && Array.isArray(invoiceData.line_items))
+            ? invoiceData.line_items.length
+            : 0;
 
         const printWindow = window.open('', '_blank', 'height=800,width=1000');
-        if (!printWindow) return alert("Please disable pop-up blocker.");
+        if (!printWindow) {
+            alert("Could not open print window. Please disable your pop-up blocker.");
+            return;
+        }
 
+        printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
+        
+        // --- START NEW PRINT STYLES (Optimized for Single Page PDF Match) ---
         printWindow.document.write(`
-<!DOCTYPE html>
-<html>
-<head>
-<title>Invoice ${invoiceData.invoice_number}</title>
-<style>
-@page { size: A4; margin: 0; }
-body { font-family: Arial; font-size: 11px; margin: 0; padding: 0; }
-.invoice { width: 210mm; min-height: 297mm; padding: 5mm; border: 1px solid #000; box-sizing: border-box; }
+            <style>
+                /* Base Styles for Print */
+                body { font-family: "Arial", sans-serif; font-size: 8pt; margin: 0 !important; padding: 0 !important; color: #000; } 
+                @page { size: A4; margin: 0; }
+                .print-container { width: 210mm; min-height: 297mm; padding: 1mm; box-sizing: border-box; }
+                .invoice-box { border: 1px solid #000; padding: 0mm; box-sizing: border-box; }
+                
+                /* Main structure table */
+                .main-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
+                .main-print-table td, .main-print-table th { padding: 0.2mm 1.5mm; vertical-align: top; border: 1px solid #000; line-height: 1.1; }
+                .main-print-table .no-border { border: none !important; padding: 0 1.5mm; }
+                .text-center { text-align: center; }
+                .text-right { text-align: right; }
+                .font-bold { font-weight: bold; }
+                
+                /* Specific Cell Styles (Match PDF font sizes/padding) */
+                .header-company-name { font-size: 11pt; font-weight: 700; text-align: center; margin: 0; }
+                .header-address { font-size: 7pt; text-align: center; line-height: 1.1; margin: 0; }
+                .header-gstin { font-size: 8pt; text-align: center; font-weight: bold; margin: 0; }
+                .invoice-title-bar { font-size: 10pt; font-weight: bold; text-align: center; padding: 0.5mm 0; }
 
-h2 { text-align:center; margin:0; text-decoration: underline; font-size:16px; }
+                /* Detail Grid Styling (Minimal) */
+                .detail-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+                .detail-grid td { padding: 0.5mm 1.5mm; font-size: 7pt; border: none !important; line-height: 1.1; }
+                .detail-grid .detail-label { font-weight: bold; width: 35%; white-space: nowrap; }
+                .address-cell { white-space: pre-wrap; line-height: 1.1; font-size: 7pt; padding: 0.5mm 1.5mm; }
+                
+                /* Items Table Styling */
+                .items-table { border: 0 !important; table-layout: fixed; }
+                .items-table th, .items-table td { border: 1px solid #000; padding: 0.5mm 1.5mm; font-size: 7pt; height: 3mm; line-height: 1.2; }
+                .items-table th { background-color: #f2f2f2; text-align: center; font-weight: bold; }
+                
+                /* Totals Box Styling (Right Side) */
+                .totals-box-right { width: 100%; }
+                .totals-box-right td { padding: 0.5mm 1.5mm; font-size: 8pt; border: none; }
+                .totals-box-right .total-label { font-weight: bold; width: 45%; }
+                .totals-box-right .total-amount { font-weight: bold; text-align: right; width: 30%; }
+                .totals-box-right .total-final { border-top: 1px solid #000; font-size: 9pt; }
+                
+                /* Footer Styles */
+                .footer-text { font-size: 7pt; padding: 1mm 1.5mm; }
+                .signature-area { width: 50%; text-align: center; }
+                
+                /* DYNAMIC HEIGHT FIX */
+                .enforced-height-cell { 
+                    height: ${DYNAMIC_ITEM_AREA_HEIGHT}; 
+                    padding: 0; 
+                    vertical-align: top;
+                }
+            </style>
+        `);
+        // --- END NEW PRINT STYLES ---
 
-.table100 { width:100%; border-collapse:collapse; }
-.table100 td, .table100 th { border:1px solid #000; padding:4px; }
+        printWindow.document.write('</head><body><div class="print-container"><div class="invoice-box">');
+        
+        let totalCgst = 0, totalSgst = 0, totalIgst = 0;
+        let totalTaxable = 0;
+        let totalQty = 0;
+        let totalDiscount = 0;
+        let totalGrossAmount = 0;
 
-.header-center { text-align:center; font-weight:bold; font-size:14px; }
-.sub-text { text-align:center; font-size:11px; line-height:1.2; }
-
-.items th { background:#f2f2f2; text-align:center; }
-.text-right { text-align:right; }
-.text-center { text-align:center; }
-.no-border td { border:none !important; }
-</style>
-</head>
-<body>
-<div class="invoice">
-
-<div class="header-center">JBS KNITWEAR</div>
-<div class="sub-text">3/2B Nesavalar Colony, PN Road, Tirupur - 641602</div>
-<div class="sub-text"><b>GSTIN:</b> 33CKAPJ7513F1ZK</div>
-
-<h2>TAX INVOICE</h2>
-
-<table class="table100">
-<tr>
-<td><b>Invoice No:</b> ${invoiceData.invoice_number}</td>
-<td><b>Date:</b> ${new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td>
-</tr>
-<tr>
-<td><b>State:</b> TAMILNADU (33)</td>
-<td><b>Place of Supply:</b> TAMILNADU (33)</td>
-</tr>
-</table>
-
-<table class="table100" style="margin-top:5px;">
-<tr><th colspan="2">Details of Receiver / Billed To</th><th colspan="2">Details of Consignee / Shipped To</th></tr>
-<tr>
-<td colspan="2">${invoiceData.customer_name}<br>${invoiceData.customer_address_line1}, ${invoiceData.customer_city_pincode}<br>GSTIN: ${invoiceData.customer_gstin}</td>
-<td colspan="2">JBS KNITWEAR<br>3/2B Nesavalar Colony, PN Road, Tirupur - 641602<br>GSTIN: 33CKAPJ7513F1ZK</td>
-</tr>
-</table>
-
-<table class="table100 items" style="margin-top:5px;">
-<tr>
-<th>Sr</th><th>Description</th><th>HSN</th><th>UOM</th><th>Qty</th><th>Rate</th><th>Amount</th>
-</tr>
-`);
-
-        let total = 0;
-        invoiceData.line_items.forEach((it, i) => {
-            const amt = it.quantity * it.unit_price;
-            total += amt;
-            printWindow.document.write(`
-<tr>
-<td class="text-center">${i+1}</td>
-<td>${it.description}</td>
-<td class="text-center">${it.final_hsn_acs_code}</td>
-<td class="text-center">${it.final_unit_of_measure || 'pcs'}</td>
-<td class="text-right">${it.quantity}</td>
-<td class="text-right">${it.unit_price.toFixed(2)}</td>
-<td class="text-right">${amt.toFixed(2)}</td>
-</tr>
-`);
+        // Calculate totals first
+        invoiceData.line_items.forEach((item) => {
+            const quantity = parseFloat(item.quantity) || 0;
+            const price = parseFloat(item.unit_price) || 0;
+            const discount = parseFloat(item.discount_amount) || 0;
+            
+            totalTaxable += parseFloat(item.taxable_value) || 0;
+            totalCgst += parseFloat(item.cgst_amount) || 0;
+            totalSgst += parseFloat(item.sgst_amount) || 0;
+            totalIgst += parseFloat(item.igst_amount) || 0;
+            totalQty += quantity; 
+            totalDiscount += discount;
+            totalGrossAmount += (quantity * price);
         });
+        
+        // Use the official header fields for rates
+        const cgstRate = (invoiceData.line_items.length > 0) ? (invoiceData.line_items[0].cgst_rate || 0).toFixed(2) : "0.00";
+        const sgstRate = (invoiceData.line_items.length > 0) ? (invoiceData.line_items[0].sgst_rate || 0).toFixed(2) : "0.00";
+        const igstRate = (invoiceData.line_items.length > 0) ? (invoiceData.line_items[0].igst_rate || 0).toFixed(2) : "0.00";
+        
+        // Sum of all taxes
+        const totalTaxAmount = totalCgst + totalSgst + totalIgst;
+        // Final Amount After Tax/Discount
+        const finalAmountAfterDiscount = totalTaxable + totalTaxAmount - parseFloat(invoiceData.party_bill_returns_amount || 0);
 
-        const cgst = total * 0.025;
-        const sgst = total * 0.025;
-        const totalAfterTax = total + cgst + sgst;
+        const customerAddress = 
+            (invoiceData.customer_address_line1 || '') + 
+            (invoiceData.customer_address_line2 ? '\n' + invoiceData.customer_address_line2 : '') + 
+            (invoiceData.customer_city_pincode ? '\n' + invoiceData.customer_city_pincode : '');
 
-printWindow.document.write(`
-<tr><td colspan="6" class="text-right"><b>Total Before Tax</b></td><td class="text-right"><b>${total.toFixed(2)}</b></td></tr>
-</table>
+        const consigneeAddress = 
+            (invoiceData.consignee_address_line1 || '') + 
+            (invoiceData.consignee_address_line2 ? '\n' + invoiceData.consignee_address_line2 : '') + 
+            (invoiceData.consignee_city_pincode ? '\n' + invoiceData.consignee_city_pincode : '');
 
-<table class="table100" style="margin-top:5px;">
-<tr><td><b>Add: CGST</b></td><td class="text-right">${cgst.toFixed(2)}</td></tr>
-<tr><td><b>Add: SGST</b></td><td class="text-right">${sgst.toFixed(2)}</td></tr>
-<tr><td><b>Total Amount After Tax</b></td><td class="text-right"><b>${totalAfterTax.toFixed(2)}</b></td></tr>
-</table>
 
-<p><b>Amount (in words):</b> ${convertAmountToWords(totalAfterTax).toUpperCase()} ONLY</p>
+        // --- START MAIN TEMPLATE (16 virtual columns) ---
+        let mainHtml = `<table class="main-print-table">`;
+        
+        // --- 1. Company Header ---
+        mainHtml += `
+        <tr>
+            <td colspan="16" class="no-border text-center" style="padding-top: 1mm;">
+                <div class="header-company-name">${companyProfile.company_name}</div>
+                <div class="header-address">${companyProfile.address_line1}, ${companyProfile.city_pincode}, ${companyProfile.state}</div>
+                <div class="header-gstin">GSTIN No.: ${companyProfile.gstin}</div>
+            </td>
+        </tr>
+        <tr>
+            <td colspan="16" class="invoice-title-bar">${invoiceData.invoice_type.replace(/_/g, ' ')}</td>
+        </tr>
+        `;
+        
+        // --- 2. Invoice/Transport Meta (R1 - 8 cols each) ---
+        mainHtml += `
+        <tr>
+            <td colspan="8" style="padding: 0; border-right: none;">
+                <table class="detail-grid" style="width: 100%;">
+                    <tr><td class="detail-label" style="width: 35%;">Invoice No:</td><td class="detail-value">${invoiceData.invoice_number}</td></tr>
+                    <tr><td class="detail-label">Invoice Date:</td><td class="detail-value">${new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td></tr>
+                    <tr><td class="detail-label">State:</td><td class="detail-value">${invoiceData.customer_state || companyProfile.state}, Code: ${invoiceData.customer_state_code || companyProfile.state_code}</td></tr>
+                </table>
+            </td>
+            <td colspan="8" style="padding: 0; border-left: 1px solid #000;">
+                <table class="detail-grid" style="width: 100%;">
+                    <tr><td class="detail-label" style="width: 35%;">Transportation Mode:</td><td class="detail-value">${invoiceData.transportation_mode || 'N/A'}</td></tr>
+                    <tr><td class="detail-label">Vehicle Number:</td><td class="detail-value">${invoiceData.vehicle_number || 'N/A'}</td></tr>
+                    <tr><td class="detail-label">Date of Supply:</td><td class="detail-value">${invoiceData.date_of_supply ? new Date(invoiceData.date_of_supply).toLocaleDateString('en-GB') : new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td></tr>
+                    <tr><td class="detail-label">Place of Supply:</td><td class="detail-value">${invoiceData.place_of_supply_state || companyProfile.state}, Code: ${invoiceData.place_of_supply_state_code || companyProfile.state_code}</td></tr>
+                </table>
+            </td>
+        </tr>
+        `;
 
-<p><b>Bank Details:</b><br>
-ICICI Bank<br>
-A/C No: 540305000194<br>
-IFSC: ICIC0005403</p>
+        // --- 3. Receiver/Consignee Details (R2 - 8 cols each) ---
+        mainHtml += `
+        <tr>
+            <td colspan="8" style="padding: 0; border-top: 1px solid #000; border-right: none;">
+                <table class="detail-grid" style="width: 100%;">
+                    <tr><td colspan="2" class="font-bold" style="padding: 0.5mm 1.5mm; border-bottom: 1px solid #000;">Details of Receiver/Billed To:</td></tr>
+                    <tr><td class="detail-label" style="width: 30%;">Name</td><td class="address-cell">: <span class="font-bold">${invoiceData.customer_name}</span></td></tr>
+                    <tr><td class="detail-label">Address</td><td class="address-cell">: ${customerAddress}</td></tr>
+                    <tr><td class="detail-label">GSTIN</td><td class="detail-value">: ${invoiceData.customer_gstin || 'N/A'}</td></tr>
+                    <tr><td class="detail-label">State:</td><td class="detail-value">: ${invoiceData.customer_state || ''}, Code: ${invoiceData.customer_state_code || ''}</td></tr>
+                </table>
+            </td>
+            <td colspan="8" style="padding: 0; border-top: 1px solid #000; border-left: 1px solid #000;">
+                <table class="detail-grid" style="width: 100%;">
+                    <tr><td colspan="2" class="font-bold" style="padding: 0.5mm 1.5mm; border-bottom: 1px solid #000;">Details of Consignee/Shipped To:</td></tr>
+                    <tr><td class="detail-label" style="width: 30%;">Name</td><td class="address-cell">: <span class="font-bold">${invoiceData.consignee_name}</span></td></tr>
+                    <tr><td class="detail-label">Address</td><td class="address-cell">: ${consigneeAddress}</td></tr>
+                    <tr><td class="detail-label">GSTIN</td><td class="detail-value">: ${invoiceData.consignee_gstin || 'N/A'}</td></tr>
+                    <tr><td class="detail-label">State:</td><td class="detail-value">: ${invoiceData.consignee_state || ''}, Code: ${invoiceData.consignee_state_code || ''}</td></tr>
+                </table>
+            </td>
+        </tr>
+        `;
 
-<div style="text-align:right; margin-top:30px;">
-<b>For, JBS KNITWEAR</b><br><br><br>
-Authorised Signatory
-</div>
+        // --- 4. Items Header (R3 & R4 - 16 columns) ---
+        mainHtml += `
+        <tr class="items-table font-bold">
+            <th rowspan="2" style="width: ${COL_WIDTHS.SR_NO};">Sr.<br>No</th>
+            <th rowspan="2" style="width: ${COL_WIDTHS.NAME_DESC};">Name of Product/Service</th>
+            <th rowspan="2" style="width: ${COL_WIDTHS.HSN};">HSN ACS</th>
+            <th rowspan="2" style="width: ${COL_WIDTHS.UOM};">UOM</th>
+            <th rowspan="2" style="width: ${COL_WIDTHS.QTY};">Qty</th>
+            <th rowspan="2" style="width: ${COL_WIDTHS.RATE};">Rate</th>
+            <th rowspan="2" style="width: ${COL_WIDTHS.AMOUNT};">Amount</th>
+            <th rowspan="2" style="width: ${COL_WIDTHS.DISCOUNT};">Less<br>Discount</th>
+            <th rowspan="2" style="width: ${COL_WIDTHS.TAXABLE};">Taxable<br>Value</th>
+            
+            <th colspan="2" style="width: ${parseFloat(COL_WIDTHS.GST_RATE) + parseFloat(COL_WIDTHS.GST_AMT)}%;">CGST</th>
+            <th colspan="2" style="width: ${parseFloat(COL_WIDTHS.GST_RATE) + parseFloat(COL_WIDTHS.GST_AMT)}%;">SGST</th>
+            <th colspan="2" style="width: ${parseFloat(COL_WIDTHS.GST_RATE) + parseFloat(COL_WIDTHS.GST_AMT)}%;">IGST</th>
+            
+            <th rowspan="2" style="width: ${COL_WIDTHS.TOTAL};">Total</th>
+        </tr>
+        <tr class="items-table font-bold">
+            <th style="width: ${COL_WIDTHS.GST_RATE};">Rate</th>
+            <th style="width: ${COL_WIDTHS.GST_AMT};">Amt</th>
+            <th style="width: ${COL_WIDTHS.GST_RATE};">Rate</th>
+            <th style="width: ${COL_WIDTHS.GST_AMT};">Amt</th>
+            <th style="width: ${COL_WIDTHS.GST_RATE};">Rate</th>
+            <th style="width: ${COL_WIDTHS.GST_AMT};">Amt</th>
+        </tr>
+        `;
 
-</div>
-</body>
-</html>
-`);
+        // --- 5. Item Rows and Enforced Height (Inner Table for continuous borders) ---
+        mainHtml += `<tr><td colspan="16" class="enforced-height-cell">`;
+        mainHtml += `<table class="items-table" style="width: 100%; height: 100%;"><tbody>`;
+        
+        invoiceData.line_items.forEach((item, index) => {
+            const quantity = parseFloat(item.quantity) || 0;
+            const unit_price = parseFloat(item.unit_price) || 0;
+            const discount = parseFloat(item.discount_amount) || 0;
+            const taxable_value = parseFloat(item.taxable_value) || 0;
+            const gross_amount = quantity * unit_price;
+            
+            mainHtml += `
+            <tr>
+                <td class="text-center" style="width: ${COL_WIDTHS.SR_NO};">${index + 1}</td>
+                <td style="width: ${COL_WIDTHS.NAME_DESC};">${item.description}</td>
+                <td class="text-center" style="width: ${COL_WIDTHS.HSN};">${item.final_hsn_acs_code || ''}</td>
+                <td class="text-center" style="width: ${COL_WIDTHS.UOM};">${item.final_unit_of_measure || 'Pcs'}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.QTY};">${quantity.toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.RATE};">${unit_price.toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.AMOUNT};">${gross_amount.toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.DISCOUNT};">${discount.toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.TAXABLE};">${taxable_value.toFixed(2)}</td>
+                
+                <td class="text-right" style="width: ${COL_WIDTHS.GST_RATE};">${(item.cgst_rate || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.GST_AMT};">${(item.cgst_amount || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.GST_RATE};">${(item.sgst_rate || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.GST_AMT};">${(item.sgst_amount || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.GST_RATE};">${(item.igst_rate || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: ${COL_WIDTHS.GST_AMT};">${(item.igst_amount || 0).toFixed(2)}</td>
+                
+                <td class="text-right font-bold" style="width: ${COL_WIDTHS.TOTAL};">${(parseFloat(item.line_total) || 0).toFixed(2)}</td>
+            </tr>`;
+        });
+        
+        // Add empty rows to take up vertical space
+        const emptyRowsToPad = Math.max(0, MIN_ROWS_TO_DISPLAY - currentRowCount);
+        for (let i = 0; i < emptyRowsToPad; i++) {
+             mainHtml += `<tr>
+                <td style="height:3mm;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+            </tr>`;
+        }
+
+        mainHtml += `</tbody></table>`;
+        mainHtml += `</td></tr>`; // Close enforced-height-cell
+
+        // --- 6. Items Footer (Totals Row) ---
+        mainHtml += `
+        <tr class="font-bold">
+            <td colspan="4" class="text-right" style="border-right: none; padding-right: 1.5mm;">Total</td>
+            <td class="text-right" style="width: ${COL_WIDTHS.QTY};">${totalQty.toFixed(2)}</td>
+            <td colspan="3" class="text-right">${(totalGrossAmount - totalDiscount).toFixed(2)}</td>
+            <td class="text-right" style="width: ${COL_WIDTHS.TAXABLE};">${totalTaxable.toFixed(2)}</td>
+            
+            <td colspan="2" class="text-right">${totalCgst.toFixed(2)}</td>
+            <td colspan="2" class="text-right">${totalSgst.toFixed(2)}</td>
+            <td colspan="2" class="text-right">${totalIgst.toFixed(2)}</td>
+            
+            <td class="text-right" style="width: ${COL_WIDTHS.TOTAL};">${finalAmountAfterDiscount.toFixed(2)}</td>
+        </tr>
+        `;
+
+        // --- 7. Grand Totals / Bank / Signature Area ---
+        mainHtml += `
+        <tr>
+            <!-- Left Column: Amount in Words / Bank Details / Notes (Span 8 columns) -->
+            <td colspan="8" style="padding: 0; border-top: 1px solid #000; border-right: none; height: 35mm; vertical-align: top;">
+                <table class="detail-grid no-border" style="width: 100%;">
+                    <tr>
+                        <td class="font-bold" colspan="2" style="padding: 0.5mm 1.5mm;">Total Amount in words:</td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" style="padding: 0.5mm 1.5mm;">
+                            <span style="text-transform: uppercase; font-weight: bold; font-size: 8.5pt;">${invoiceData.amount_in_words || convertAmountToWords(finalAmountAfterDiscount) + ' RUPEES ONLY'}</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="detail-label" style="width: 30%; padding: 0.5mm 1.5mm;">Bundles:</td>
+                        <td class="font-bold detail-value" style="padding: 0.5mm 1.5mm;">: ${invoiceData.bundles_count || 'N/A'}</td>
+                    </tr>
+                    
+                    <tr>
+                        <td class="footer-text font-bold" colspan="2" style="border-top: 1px solid #000; padding: 0;">
+                            <table class="detail-grid no-border" style="width: 100%;">
+                                <tr><td colspan="2" style="font-size: 8pt; font-weight: bold; padding: 0.5mm 1.5mm;">Bank Details:</td></tr>
+                                <tr><td class="detail-label" style="width: 30%;">BANK NAME</td><td class="detail-value">: ${companyProfile.bank_name}</td></tr>
+                                <tr><td class="detail-label">A/C NO</td><td class="detail-value">: ${companyProfile.bank_account_no}</td></tr>
+                                <tr><td class="detail-label">IFSC NO</td><td class="detail-value">: ${companyProfile.bank_ifsc_code}</td></tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <tr>
+                        <td colspan="2" class="footer-text font-bold" style="border-top: 1px solid #000; font-size: 7pt; padding: 0.5mm 1.5mm;">
+                            GST Payable on Reverse Charge: ${invoiceData.reverse_charge || 'No'}
+                        </td>
+                    </tr>
+                </table>
+            </td>
+            
+            <!-- Right Column: Financial Summary and Signatures (Span 8 columns) -->
+            <td colspan="8" style="padding: 0; border-top: 1px solid #000; border-left: 1px solid #000; height: 35mm;">
+                
+                <table class="totals-box-right" style="width: 100%;">
+                    <tr><td class="total-label" colspan="3">Total Amount Before Tax</td><td class="total-amount">${totalTaxable.toFixed(2)}</td></tr>
+                    <tr><td class="total-label">Add: CGST</td><td class="total-rate"></td><td class="total-colon"></td><td class="total-amount">${totalCgst.toFixed(2)}</td></tr>
+                    <tr><td class="total-label">Add: SGST</td><td class="total-rate"></td><td class="total-colon"></td><td class="total-amount">${totalSgst.toFixed(2)}</td></tr>
+                    <tr><td class="total-label">Add: IGST</td><td class="total-rate"></td><td class="total-colon"></td><td class="total-amount">${totalIgst.toFixed(2)}</td></tr>
+                    <tr class="total-final">
+                        <td class="total-label font-bold" colspan="3" style="font-size: 10pt;">Total Amount After Tax</td>
+                        <td class="total-amount font-bold" style="font-size: 10pt;">${finalAmountAfterDiscount.toFixed(2)}</td>
+                    </tr>
+                </table>
+
+                <div style="padding: 0.5mm 1.5mm; font-size: 7pt; border-top: 1px solid #000;">
+                    Certified that the particulars given above are true & correct.
+                </div>
+                
+                <div style="border-top: 1px solid #000; min-height: 25mm; display: flex; align-items: flex-end;">
+                    <div class="signature-area text-center" style="border-right: 1px solid #000;">
+                        <div style="margin-bottom: 20mm; font-size: 7pt;">(Common Seal)</div>
+                    </div>
+                    <div class="signature-area text-center">
+                        <div class="font-bold" style="text-align: center; font-size: 8pt;">For, ${companyProfile.company_name}</div>
+                        <div style="margin-top: 15mm; font-size: 7pt;">Authorised Signatory</div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+        `;
+        
+        mainHtml += `</table>`;
+        // --- END MAIN TEMPLATE ---
+
+        printWindow.document.write('<div class="invoice-box">' + mainHtml + '</div></div></body></html>');
         printWindow.document.close();
         printWindow.focus();
-        setTimeout(() => printWindow.print(), 200);
+        
+        // Final attempt to trigger print dialog after content load
+        setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+        }, 250);
 
-    } catch(e) {
-        console.error(e);
-        alert(e.message);
+    } catch (error) {
+        console.error("Error preparing invoice for print:", error);
+        alert("Could not prepare invoice for printing: " + error.message);
     }
 }
-
 function convertAmountToWords(amount) {
     // --- THIS IS THE KEY FIX FOR NEGATIVE NUMBERS ---
     const isNegative = amount < 0;
