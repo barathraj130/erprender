@@ -4663,9 +4663,9 @@ async function printCurrentInvoice() {
     }
 }
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
-    // === FIX: Define constant immediately at function start ===
+    // === FIX 1: Define constant for minimum rows ===
     const MIN_ROWS_TO_DISPLAY = 15; 
-    // =========================================================
+    // ===============================================
     
     try {
         const [invoiceRes, companyProfile] = await Promise.all([
@@ -4680,6 +4680,12 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             alert("Company profile could not be loaded. Please update it in the Company section.");
             return;
         }
+
+        // === FIX 2: Safely calculate currentRowCount ===
+        const currentRowCount = (invoiceData.line_items && Array.isArray(invoiceData.line_items))
+            ? invoiceData.line_items.length
+            : 0;
+        // ===============================================
 
         const printWindow = window.open('', '_blank', 'height=800,width=1000');
         if (!printWindow) {
