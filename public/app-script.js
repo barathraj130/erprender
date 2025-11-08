@@ -4691,12 +4691,12 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 /* Base Styles for Print */
                 body { font-family: "Arial", sans-serif; font-size: 8pt; margin: 0 !important; padding: 0 !important; color: #000; } 
                 @page { size: A4; margin: 0; }
-                .print-container { width: 210mm; height: 297mm; padding: 1mm; box-sizing: border-box; }
+                /* Enforce A4 dimensions for PDF output */
+                .print-container { width: 210mm; min-height: 297mm; padding: 1mm; box-sizing: border-box; }
                 .invoice-box { border: 1px solid #000; padding: 0mm; box-sizing: border-box; }
                 
                 /* Main structure table */
                 .main-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
-                /* Reduced padding/line height for high data density */
                 .main-print-table td, .main-print-table th { padding: 0.2mm 1.5mm; vertical-align: top; border: 1px solid #000; line-height: 1.1; }
                 .main-print-table .no-border { border: none !important; padding: 0 1.5mm; }
                 .text-center { text-align: center; }
@@ -4714,6 +4714,9 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .detail-grid td { padding: 0.5mm 1.5mm; font-size: 7pt; border: none !important; line-height: 1.1; }
                 .detail-grid .detail-label { font-weight: bold; width: 35%; white-space: nowrap; }
                 
+                /* Address Overrides */
+                .address-cell { white-space: pre-wrap; line-height: 1.1; font-size: 7pt; padding: 0.5mm 1.5mm; }
+
                 /* Items Table Styling */
                 .items-table th, .items-table td { border: 1px solid #000; padding: 0.5mm 1.5mm; font-size: 7pt; height: 3mm; }
                 .items-table th { background-color: #f2f2f2; text-align: center; font-weight: bold; }
@@ -4731,7 +4734,10 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 .footer-text { font-size: 7pt; padding: 1mm 1.5mm; }
                 .signature-area { width: 50%; text-align: center; }
                 .signature-area.consignee { border-right: 1px solid #000; }
-                .signature-line { margin-top: 15mm; }
+                
+                /* FIX: Enforce minimum cell height for the item table area to push footer down */
+                .enforced-height-cell { height: 180mm; padding: 0; }
+                .items-container { height: 100%; display: flex; flex-direction: column; }
             </style>
         `);
         // --- END NEW PRINT STYLES ---
@@ -4742,18 +4748,21 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         let totalTaxable = 0;
         let totalQty = 0;
         let totalDiscount = 0;
+        let totalGrossAmount = 0;
 
         // Calculate totals first
         invoiceData.line_items.forEach((item) => {
             const qty = parseFloat(item.quantity) || 0;
+            const price = parseFloat(item.unit_price) || 0;
             const discount = parseFloat(item.discount_amount) || 0;
-
+            
             totalTaxable += parseFloat(item.taxable_value) || 0;
             totalCgst += parseFloat(item.cgst_amount) || 0;
             totalSgst += parseFloat(item.sgst_amount) || 0;
             totalIgst += parseFloat(item.igst_amount) || 0;
             totalQty += qty;
             totalDiscount += discount;
+            totalGrossAmount += (qty * price);
         });
         
         // Use the official header fields for rates
@@ -4763,7 +4772,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         
         // Sum of all taxes
         const totalTaxAmount = totalCgst + totalSgst + totalIgst;
-        // Final Amount After Tax/Discount (Should match invoiceData.total_amount if calculation was correct)
+        // Final Amount After Tax/Discount
         const finalAmountAfterDiscount = totalTaxable + totalTaxAmount - parseFloat(invoiceData.party_bill_returns_amount || 0);
 
         const customerAddress = 
@@ -4780,7 +4789,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         // --- START MAIN TEMPLATE ---
         let mainHtml = `<table class="main-print-table">`;
         
-        // --- 1. Company Header (Uses Consignee Name JBS KNITWEAR from the sample, assuming it's dynamic) ---
+        // --- 1. Company Header ---
         mainHtml += `
         <tr>
             <td colspan="16" class="no-border">
@@ -4868,11 +4877,11 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         </tr>
         `;
 
-        // --- 5. Item Rows ---
-        const MIN_ROWS_TO_DISPLAY = 10; 
-        const currentRowCount = invoiceData.line_items.length;
-        const emptyRowsNeeded = Math.max(0, MIN_ROWS_TO_DISPLAY - currentRowCount);
-
+        // --- 5. Item Rows and Enforced Height ---
+        mainHtml += `<tr><td colspan="16" class="enforced-height-cell">`;
+        mainHtml += `<div class="items-container">`;
+        mainHtml += `<table class="items-table" style="height: 100%;"><tbody>`;
+        
         invoiceData.line_items.forEach((item, index) => {
             const quantity = parseFloat(item.quantity) || 0;
             const unit_price = parseFloat(item.unit_price) || 0;
@@ -4881,36 +4890,42 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             const gross_amount = quantity * unit_price;
             
             mainHtml += `
-            <tr class="items-table">
-                <td class="text-center">${index + 1}</td>
-                <td>${item.description}</td>
-                <td class="text-center">${item.final_hsn_acs_code || ''}</td>
-                <td class="text-center">${item.final_unit_of_measure || 'Pcs'}</td>
-                <td class="text-right">${quantity.toFixed(2)}</td>
-                <td class="text-right">${unit_price.toFixed(2)}</td>
-                <td class="text-right">${gross_amount.toFixed(2)}</td>
-                <td class="text-right">${discount.toFixed(2)}</td>
-                <td class="text-right">${taxable_value.toFixed(2)}</td>
-                <td class="text-right">${(item.cgst_rate || 0).toFixed(2)}</td>
-                <td class="text-right">${(item.cgst_amount || 0).toFixed(2)}</td>
-                <td class="text-right">${(item.sgst_rate || 0).toFixed(2)}</td>
-                <td class="text-right">${(item.sgst_amount || 0).toFixed(2)}</td>
-                <td class="text-right">${(item.igst_rate || 0).toFixed(2)}</td>
-                <td class="text-right">${(item.igst_amount || 0).toFixed(2)}</td>
-                <td class="text-right font-bold">${(parseFloat(item.line_total) || 0).toFixed(2)}</td>
+            <tr>
+                <td class="text-center" style="width: 3%;">${index + 1}</td>
+                <td style="width: 17%;">${item.description}</td>
+                <td class="text-center" style="width: 6%;">${item.final_hsn_acs_code || ''}</td>
+                <td class="text-center" style="width: 4%;">${item.final_unit_of_measure || 'Pcs'}</td>
+                <td class="text-right" style="width: 5%;">${quantity.toFixed(2)}</td>
+                <td class="text-right" style="width: 6%;">${unit_price.toFixed(2)}</td>
+                <td class="text-right" style="width: 7%;">${gross_amount.toFixed(2)}</td>
+                <td class="text-right" style="width: 5%;">${discount.toFixed(2)}</td>
+                <td class="text-right" style="width: 7%;">${taxable_value.toFixed(2)}</td>
+                <td class="text-right" style="width: 4%;">${(item.cgst_rate || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: 5%;">${(item.cgst_amount || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: 4%;">${(item.sgst_rate || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: 5%;">${(item.sgst_amount || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: 4%;">${(item.igst_rate || 0).toFixed(2)}</td>
+                <td class="text-right" style="width: 5%;">${(item.igst_amount || 0).toFixed(2)}</td>
+                <td class="text-right font-bold" style="width: 7%;">${(parseFloat(item.line_total) || 0).toFixed(2)}</td>
             </tr>`;
         });
         
-        for (let i = 0; i < emptyRowsNeeded; i++) {
-            mainHtml += `<tr><td style="height:3mm;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+        // Add empty rows to take up vertical space
+        const emptyRowsToPad = Math.max(0, MIN_ROWS_TO_DISPLAY - currentRowCount);
+        for (let i = 0; i < emptyRowsToPad; i++) {
+             mainHtml += `<tr><td style="height:3mm;"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
         }
 
+        mainHtml += `</tbody></table></div>`;
+        mainHtml += `</td></tr>`; // Close enforced-height-cell
+
         // --- 6. Items Footer (Totals Row) ---
+        // This row MUST be outside the enforced height cell, as it's the permanent footer of the item section.
         mainHtml += `
         <tr class="font-bold">
             <td colspan="4" class="text-right">Total</td>
             <td class="text-right">${totalQty.toFixed(2)}</td>
-            <td colspan="2" class="text-right">${(totalTaxable + totalDiscount).toFixed(2)}</td>
+            <td colspan="2" class="text-right">${totalGrossAmount.toFixed(2)}</td>
             <td class="text-right">${totalDiscount.toFixed(2)}</td>
             <td class="text-right">${totalTaxable.toFixed(2)}</td>
             <td colspan="2" class="text-right">${totalCgst.toFixed(2)}</td>
@@ -4988,7 +5003,7 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
                 <div class="footer-text font-bold" style="border-top: 1px solid #000;">
                     GST Payable on Reverse Charge : ${invoiceData.reverse_charge || 'No'}
                 </div>
-                <div class="footer-text" style="border-top: 1px solid #000;">
+                <div class="footer-text">
                     Certified that the particulars given above are true & correct.
                 </div>
                 
