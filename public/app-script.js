@@ -4662,10 +4662,12 @@ async function printCurrentInvoice() {
         alert("Please save the invoice first or ensure an invoice is loaded in the modal to print.");
     }
 }
+// In app-script.js (The core logic for printing the invoice)
+
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
 
-    const MIN_ROWS_TO_DISPLAY = 18; // Matches your PDF visible rows
-    const ROW_HEIGHT = "7mm"; // EXACT row height like your PDF
+    const MIN_ROWS_TO_DISPLAY = 18; // Matches PDF visible rows
+    const ROW_HEIGHT = "7mm"; // Exact row height for A4 layout control
 
     try {
         // Fetch invoice details and company profile concurrently
@@ -4681,7 +4683,16 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
         const printWindow = window.open('', '_blank', 'width=1000,height=800');
         if (!printWindow) return alert("Enable popup windows.");
 
-        // 2. Start writing HTML to the new window, including the complex print-specific styling
+        // --- Data Extraction for Footer Consistency ---
+        // We use the final calculated values stored in the invoice header for the footer summary (right side), 
+        // ensuring they match the Amount in Words text.
+        const totalAmountBeforeTax = parseFloat(invoiceData.amount_before_tax) || 0;
+        const totalCGST_Header = parseFloat(invoiceData.total_cgst_amount) || 0;
+        const totalSGST_Header = parseFloat(invoiceData.total_sgst_amount) || 0;
+        const totalIGST_Header = parseFloat(invoiceData.total_igst_amount) || 0;
+        const finalAmountAfterTaxHeader = parseFloat(invoiceData.total_amount) || 0;
+
+        // 2. Start writing HTML to the new window, applying the PDF-like structure
         printWindow.document.write(`
 <!DOCTYPE html>
 <html>
@@ -4690,15 +4701,17 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
 
 <style>
 @page { size:A4; margin:0; }
-body { margin:0; padding:0; font-family:Arial; font-size:8pt; }
-table { border-collapse:collapse; width:100%; }
+body { margin:0; padding:0; font-family:Arial, sans-serif; font-size:8pt; }
+table { border-collapse:collapse; width:100%; table-layout: fixed; } /* Use fixed layout for strict column control */
 
 .inv-table td, .inv-table th {
     border:1px solid #000;
     padding:2px 3px;
-    height:${ROW_HEIGHT};
+    height:${ROW_HEIGHT}; /* Enforce cell height */
     line-height:1.15;
+    vertical-align: top;
 }
+.inv-table { height: 297mm; } /* Attempt to match A4 height */
 
 .text-center { text-align:center; }
 .text-right { text-align:right; }
@@ -4716,11 +4729,21 @@ table { border-collapse:collapse; width:100%; }
 
 <tr>
 <td colspan="8"><b>Invoice No:</b> ${invoiceData.invoice_number}</td>
+<td colspan="8"><b>Transportation Mode:</b> ${invoiceData.transportation_mode || 'N/A'}</td>
+</tr>
+
+<tr>
 <td colspan="8"><b>Invoice Date:</b> ${new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td>
+<td colspan="8"><b>Vehicle Number:</b> ${invoiceData.vehicle_number || 'N/A'}</td>
 </tr>
 
 <tr>
 <td colspan="8"><b>State:</b> ${invoiceData.customer_state} (${invoiceData.customer_state_code})</td>
+<td colspan="8"><b>Date of Supply:</b> ${invoiceData.date_of_supply ? new Date(invoiceData.date_of_supply).toLocaleDateString('en-GB') : new Date(invoiceData.invoice_date).toLocaleDateString('en-GB')}</td>
+</tr>
+
+<tr>
+<td colspan="8"></td>
 <td colspan="8"><b>Place of Supply:</b> ${invoiceData.place_of_supply_state} (${invoiceData.place_of_supply_state_code})</td>
 </tr>
 
@@ -4735,7 +4758,8 @@ ${invoiceData.customer_name}<br>
 ${invoiceData.customer_address_line1}<br>
 ${invoiceData.customer_address_line2 || ''}<br>
 ${invoiceData.customer_city_pincode}<br>
-GSTIN: ${invoiceData.customer_gstin}
+GSTIN: ${invoiceData.customer_gstin}<br>
+State: ${invoiceData.customer_state}, Code: ${invoiceData.customer_state_code}
 </td>
 
 <td colspan="8">
@@ -4743,11 +4767,12 @@ ${invoiceData.consignee_name || invoiceData.customer_name}<br>
 ${invoiceData.consignee_address_line1 || invoiceData.customer_address_line1}<br>
 ${invoiceData.consignee_address_line2 || invoiceData.customer_address_line2 || ''}<br>
 ${invoiceData.consignee_city_pincode || invoiceData.customer_city_pincode}<br>
-GSTIN: ${invoiceData.consignee_gstin || invoiceData.customer_gstin}
+GSTIN: ${invoiceData.consignee_gstin || invoiceData.customer_gstin}<br>
+State: ${invoiceData.consignee_state || invoiceData.customer_state}, Code: ${invoiceData.consignee_state_code || invoiceData.customer_state_code}
 </td>
 </tr>
 
-<!-- COLUMN HEADERS -->
+<!-- COLUMN HEADERS - 16 COLUMNS TOTAL -->
 <tr class="font-bold text-center">
 <th style="width:3%;">Sr</th>
 <th style="width:28%;">Name of Product/Service</th>
@@ -4768,29 +4793,22 @@ GSTIN: ${invoiceData.consignee_gstin || invoiceData.customer_gstin}
 </tr>
 `);
 
-        let totalQty=0,totalTaxable=0,totalCgst=0,totalSgst=0,totalIgst=0;
+        let totalQty=0, totalTaxableLine=0, totalCgstLine=0, totalSgstLine=0, totalIgstLine=0;
 
         invoiceData.line_items.forEach((item,i)=>{
             
-            // Calculate line totals based on current DB values, ensuring safety with parseFloat
             const itemQty = parseFloat(item.quantity) || 0;
             const itemRate = parseFloat(item.unit_price) || 0;
             const itemDiscount = parseFloat(item.discount_amount) || 0;
+            const grossAmount = Math.abs(itemQty) * itemRate;
+            const taxableValue = parseFloat(item.taxable_value) || 0;
             
-            // Note: Taxable value calculation logic is contained within the backend upon saving, 
-            // but for printing we must calculate the gross amount (Qty * Rate) first for completeness.
-            const grossAmount = itemQty * itemRate;
-            const taxableValue = parseFloat(item.taxable_value) || 0; // Use stored taxable value
-            
-            // Accumulate totals (using absolute values for display totals if qty is negative for returns)
-            // Note: Total qty accumulation logic is simplified for display, usually sum of absolute values.
             totalQty+= Math.abs(itemQty); 
-            totalTaxable+= Math.abs(taxableValue);
-            totalCgst+= parseFloat(item.cgst_amount || 0);
-            totalSgst+= parseFloat(item.sgst_amount || 0);
-            totalIgst+= parseFloat(item.igst_amount || 0);
+            totalTaxableLine+= Math.abs(taxableValue);
+            totalCgstLine+= parseFloat(item.cgst_amount || 0);
+            totalSgstLine+= parseFloat(item.sgst_amount || 0);
+            totalIgstLine+= parseFloat(item.igst_amount || 0);
 
-            // Write Line Item Row
             printWindow.document.write(`
 <tr>
 <td class="text-center">${i+1}</td>
@@ -4818,18 +4836,6 @@ GSTIN: ${invoiceData.consignee_gstin || invoiceData.customer_gstin}
             printWindow.document.write(`<tr>${'<td></td>'.repeat(16)}</tr>`);
         }
         
-        // Final Amount calculation (Gross Taxable + Total Taxes)
-        // Note: The backend already calculates invoiceData.total_amount using party_bill_returns_amount (lump sum discount).
-        // For the *printing table footer*, we calculate based on the line item aggregates, mirroring the visual layout in the source image.
-        const finalAmountLineItemAggregate = totalTaxable + totalCgst + totalSgst + totalIgst;
-        
-        // Use the total from the invoice header for the total line item row to ensure consistency with amount in words
-        const totalAmountBeforeTax = parseFloat(invoiceData.amount_before_tax) || 0;
-        const totalCGST_Header = parseFloat(invoiceData.total_cgst_amount) || 0;
-        const totalSGST_Header = parseFloat(invoiceData.total_sgst_amount) || 0;
-        const totalIGST_Header = parseFloat(invoiceData.total_igst_amount) || 0;
-        const finalAmountAfterTaxHeader = parseFloat(invoiceData.total_amount) || 0; // Includes the lump-sum adjustment if any
-
         // Line Item Grand Total Row (Matches the sum of line item totals + Tax)
         printWindow.document.write(`
 <tr class="font-bold">
@@ -4838,24 +4844,24 @@ GSTIN: ${invoiceData.consignee_gstin || invoiceData.customer_gstin}
     <td></td>
     <td></td>
     <td></td>
-    <td class="text-right">${totalTaxable.toFixed(2)}</td>
+    <td class="text-right">${totalTaxableLine.toFixed(2)}</td>
     <td></td>
-    <td class="text-right">${totalCgst.toFixed(2)}</td>
+    <td class="text-right">${totalCgstLine.toFixed(2)}</td>
     <td></td>
-    <td class="text-right">${totalSgst.toFixed(2)}</td>
+    <td class="text-right">${totalSgstLine.toFixed(2)}</td>
     <td></td>
-    <td class="text-right">${totalIgst.toFixed(2)}</td>
-    <td class="text-right">${finalAmountLineItemAggregate.toFixed(2)}</td>
+    <td class="text-right">${totalIgstLine.toFixed(2)}</td>
+    <td class="text-right">${(totalTaxableLine + totalCgstLine + totalSgstLine + totalIgstLine).toFixed(2)}</td>
 </tr>
 `);
 
-        // Footer Section
+        // Footer Section - STRICTLY matching the source PDF layout
         printWindow.document.write(`
 <tr><td colspan="16" class="font-bold">Total Amount in words: ${invoiceData.amount_in_words || convertAmountToWords(finalAmountAfterTaxHeader).toUpperCase() + ' RUPEES ONLY'}</td></tr>
 
 <tr>
 <td colspan="8">
-<b>Bundles:</b> ${invoiceData.bundles_count !== undefined && invoiceData.bundles_count !== null ? invoiceData.bundles_count : 'N/A'}<br>
+<b>Bundles:</b> ${invoiceData.bundles_count !== undefined && invoiceData.bundles_count !== null ? invoiceData.bundles_count : 'N/A'}<br><br>
 <b>Bank Details:</b><br>
 BANK NAME: ${companyProfile.bank_name}<br>
 A/C NO: ${companyProfile.bank_account_no}<br>
@@ -4868,12 +4874,7 @@ IFSC NO: ${companyProfile.bank_ifsc_code}
 <tr><td style="border: none !important; font-size: 0.9em;">Add: CGST</td><td style="border: none !important;" class="text-right">${totalCGST_Header.toFixed(2)}</td></tr>
 <tr><td style="border: none !important; font-size: 0.9em;">Add: SGST</td><td style="border: none !important;" class="text-right">${totalSGST_Header.toFixed(2)}</td></tr>
 <tr><td style="border: none !important; font-size: 0.9em;">Add: IGST</td><td style="border: none !important;" class="text-right">${totalIGST_Header.toFixed(2)}</td></tr>
-${
-    (parseFloat(invoiceData.party_bill_returns_amount) || 0) > 0 
-    ? `<tr><td style="border: none !important; font-size: 0.9em; color: ${invoiceData.invoice_type === 'SALES_RETURN' ? 'red' : 'green'};">Less: Adjustment/Discount</td><td style="border: none !important;" class="text-right">${(parseFloat(invoiceData.party_bill_returns_amount) || 0).toFixed(2)}</td></tr>`
-    : ''
-}
-<tr><td style="border: none !important;" class="font-bold">Total Amount After Tax</td><td style="border: none !important;" class="font-bold text-right">${finalAmountAfterTaxHeader.toFixed(2)}</td></tr>
+<tr style="border-top: 1px solid #000;"><td style="border: none !important;" class="font-bold">Total Amount After Tax</td><td style="border: none !important;" class="font-bold text-right">${finalAmountAfterTaxHeader.toFixed(2)}</td></tr>
 </table>
 </td>
 </tr>
@@ -4882,7 +4883,7 @@ ${
 
 <tr style="height:20mm;">
 <td colspan="8" class="text-center" style="vertical-align:bottom;">(Common Seal)</td>
-<td colspan="8" class="text-center" style="vertical-align:bottom;"><b>For, ${companyProfile.company_name}</b><br><br>Authorised Signatory</td>
+<td colspan="8" class="text-right" style="vertical-align:bottom;">Certified that the particulars given above are true & correct.<br><br>For, ${companyProfile.company_name}<br>Authorised Signatory</td>
 </tr>
 
 </table>
