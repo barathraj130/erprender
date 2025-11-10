@@ -906,6 +906,7 @@ function calculatePercentageChange(current, previous) {
 function updateDashboardCards() {
     const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
 
+    // --- Update Navigation Counts ---
     const navCustomerCount = document.getElementById('navCustomerCount');
     const navSupplierCount = document.getElementById('navSupplierCount');
     const navInventoryCount = document.getElementById('navInventoryCount');
@@ -923,51 +924,58 @@ function updateDashboardCards() {
     let previousRevenue = 0;
     let newCustomersCurrent = 0;
 
-    // 1. Calculate revenue from invoices
+    // 1. Calculate revenue from invoices (Based on amount_before_tax in the invoice cache)
     invoicesCache.forEach(inv => {
         const invDate = new Date(inv.invoice_date);
         if (inv.status !== 'Void' && inv.status !== 'Draft') {
-            const revenue = parseFloat(inv.amount_before_tax || 0);
+            // Revenue is the taxable base (amount_before_tax)
+            const revenue = Math.abs(parseFloat(inv.amount_before_tax || 0)); 
+            
+            // Current Period
             if (invDate >= ranges.currentStart && invDate <= ranges.currentEnd) {
                 currentRevenue += revenue;
-            } else if (invDate >= ranges.previousStart && invDate <= ranges.currentEnd) { // Note: previousEnd should be used
+            } 
+            // Previous Period
+            else if (invDate >= ranges.previousStart && invDate <= ranges.previousEnd) { 
                 previousRevenue += revenue;
             }
         }
     });
     
-    // --- THE FIX IS HERE ---
-    // 2. Add revenue from direct transactions, EXCLUDING opening balances
+    // 2. Add revenue from direct transactions (Excluding invoice-related, payments, and opening balances)
     allTransactionsCache.forEach(tx => {
         const txDate = new Date(tx.date);
         const catInfo = transactionCategories.find(c => c.name === tx.category);
 
-        // This is the critical check: ensure the group is not 'opening_balance'
-        if (!catInfo || catInfo.group === 'opening_balance') {
+        // Skip non-revenue transactions: payments, returns, and balance sheet movements
+        if (!catInfo || 
+            catInfo.group === 'opening_balance' || 
+            catInfo.group === 'customer_payment' || 
+            catInfo.group === 'customer_return' || 
+            tx.related_invoice_id) {
             return; 
         }
 
-        // Check if transaction is within the current period
-        if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd) {
-            // FIX: Include 'receivable_increase' type, as this represents revenue recognized on credit sales
-            if ( (catInfo.type.includes('income') || catInfo.type.includes('receivable_increase')) && !tx.related_invoice_id) {
-                if(catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops') {
-                     // Use Math.abs() for robust summation of revenue magnitude
-                     currentRevenue += Math.abs(parseFloat(tx.amount || 0)); 
-                }
-            }
-        } 
-        // Check if transaction is within the previous period for comparison
-        else if (txDate >= ranges.previousStart && txDate <= ranges.previousEnd) { // Corrected to previousEnd
-            // FIX: Include 'receivable_increase' type
-            if ( (catInfo.type.includes('income') || catInfo.type.includes('receivable_increase')) && !tx.related_invoice_id) {
-                 if(catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops') {
-                    previousRevenue += Math.abs(parseFloat(tx.amount || 0)); // Use Math.abs()
-                 }
+        // Revenue is the magnitude of the transaction amount
+        const revenue = Math.abs(parseFloat(tx.amount || 0)); 
+        
+        // A revenue transaction is any income or receivable increase not related to an invoice
+        const isRevenueTransaction = (catInfo.type.includes('income') || catInfo.type.includes('receivable_increase')) && 
+                                     (catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops');
+        
+        if (isRevenueTransaction) {
+            // Current Period
+            if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd) {
+                currentRevenue += revenue; 
+            } 
+            // Previous Period
+            else if (txDate >= ranges.previousStart && txDate <= ranges.previousEnd) { 
+                previousRevenue += revenue;
             }
         }
     });
     
+    // 3. New Customer Count
     customersOnly.forEach(user => {
         const joinDate = new Date(user.created_at);
         if (joinDate >= ranges.currentStart && joinDate <= ranges.currentEnd) {
@@ -975,6 +983,8 @@ function updateDashboardCards() {
         }
     });
     
+    // --- Update KPI Display ---
+
     const monthlyRevenueEl = document.getElementById("monthlyRevenue");
     if (monthlyRevenueEl) {
         monthlyRevenueEl.textContent = `₹${currentRevenue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
@@ -996,6 +1006,7 @@ function updateDashboardCards() {
     const totalProductsEl = document.getElementById("totalProducts");
     if(totalProductsEl) totalProductsEl.textContent = productsCache.length;
 
+    // 4. Pending Invoices KPI
     const pendingInv = invoicesCache.filter(inv => inv.status !== "Paid" && inv.status !== "Void");
     const pendingAmt = pendingInv.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0) - parseFloat(inv.paid_amount || 0), 0);
     
@@ -1005,6 +1016,7 @@ function updateDashboardCards() {
     const pendingAmountEl = document.getElementById("pendingAmount");
     if(pendingAmountEl) pendingAmountEl.textContent = `₹${pendingAmt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 
+    // 5. Inventory Alerts KPI
     const lowStockCount = productsCache.filter(p => p.low_stock_threshold > 0 && p.current_stock <= p.low_stock_threshold).length;
     const lowStockAlertEl = document.getElementById("lowStockAlert");
     if(lowStockAlertEl){
@@ -1012,6 +1024,7 @@ function updateDashboardCards() {
         lowStockAlertEl.style.color = lowStockCount > 0 ? 'var(--danger-color)' : 'var(--text-light-color)';
     }
     
+    // 6. Today's Snapshot
     const todayStr = new Date().toISOString().split('T')[0];
     const todaysInvoices = invoicesCache.filter(inv => inv.invoice_date.startsWith(todayStr) && inv.status !== 'Void' && inv.status !== 'Draft');
     const todaysRevenue = todaysInvoices.reduce((sum, inv) => sum + parseFloat(inv.amount_before_tax || 0), 0);
@@ -2585,25 +2598,25 @@ async function exportCustomerSummary() {
         alert(`Failed to export customer summary: ${error.message}`);
     }
 }
-// Helper function to determine the sign for the Cash/Bank Ledger
-function getLedgerAmount(tx) {
+// Helper function to determine the correct signed flow for Accounts Receivable (AR) / Customer Summary balance.
+function getReceivableAmount(tx) {
     let amount = parseFloat(tx.amount || 0);
     if (amount === 0) return 0;
-    
-    const catInfo = transactionCategories.find(c => c.name === tx.category);
 
-    // Core Fix: Customer transactions (which track AR) store payments/refunds as negative/positive for AR.
-    // For Cash/Bank ledger, we must flip the sign to correctly reflect cash/bank inflow/outflow.
-    if (tx.user_id && catInfo && catInfo.relevantTo === 'customer' && 
-        (catInfo.affectsLedger.includes("cash") || catInfo.affectsLedger.includes("bank")) &&
-        // Exclude Opening Balance Adjustment, as it is signed correctly to initialize AR.
-        tx.category !== "Opening Balance Adjustment") { 
-        
-        return -amount;
+    const catInfo = transactionCategories.find(c => c.name === tx.category);
+    
+    // Skip transactions not related to the customer's AR/Loan/Chit balance
+    if (!tx.user_id || !catInfo) return 0;
+
+    // --- Core Fix: Payments Received were historically stored with the wrong sign (Positive) for AR ---
+    // If the category is a customer payment and the amount is positive, it means the system stored
+    // the value incorrectly for AR tracking, so we must flip it to negative (Credit, reducing AR).
+    if (catInfo.group === 'customer_payment' && amount > 0 && tx.category !== "Opening Balance Adjustment") {
+        return -amount; 
     }
     
-    // For all other categories (Lenders, internal ops, Opening Balances for Cash/Bank) 
-    // the stored sign (positive=inflow, negative=outflow) is already correct.
+    // For all other standard AR affecting transactions (Sales, Loans Out, Returns, Opening Adjustment),
+    // the stored sign is considered correct (Positive = increase AR, Negative = decrease AR).
     return amount;
 }
 async function loadSupplierSummaries() {
@@ -5154,7 +5167,7 @@ async function generateAndDisplayReport(reportType, view = 'monthly') {
 }
 function generatePnlReport(transactions, period) {
     let totalRevenue = 0;
-    let totalCogs = 0;
+    let totalCogs = 0; // Cost of Goods Sold
     let otherIncome = 0;
     let operatingExpenses = 0;
     let interestPaid = 0;
@@ -5167,15 +5180,17 @@ function generatePnlReport(transactions, period) {
     );
 
     monthlyInvoices.forEach(invoice => {
-        totalRevenue += parseFloat(invoice.amount_before_tax || 0);
+        // Invoice total amount before tax is the core revenue recognized
+        totalRevenue += Math.abs(parseFloat(invoice.amount_before_tax || 0));
         
-        // Calculate COGS accurately
+        // Calculate COGS accurately (requires line items to be fetched if they aren't in the cache, but assume cache is updated for simplicity)
         if (invoice.line_items) {
             invoice.line_items.forEach(item => {
                 if (item.product_id) {
                     const product = productsCache.find(p => p.id === item.product_id);
                     if (product) {
-                        totalCogs += (parseFloat(product.cost_price) || 0) * (parseFloat(item.quantity) || 0);
+                        // Use the magnitude of quantity for COGS calculation (handles returns implicitly if cost price is correct)
+                        totalCogs += (parseFloat(product.cost_price) || 0) * Math.abs(parseFloat(item.quantity) || 0);
                     }
                 }
             });
@@ -5187,26 +5202,36 @@ function generatePnlReport(transactions, period) {
         const catInfo = transactionCategories.find(c => c.name === tx.category);
         if (!catInfo) return;
 
-        // --- FIX: Exclude all initialization transactions from P&L ---
-        if (catInfo.group === 'opening_balance') return;
-        // --- END FIX ---
-
         const amount = parseFloat(tx.amount || 0);
+        const amountMagnitude = Math.abs(amount);
 
-        // Capture other income (e.g., interest received, bank interest)
-        // Check if it's an income transaction AND not related to customers (already counted by invoice revenue or separate payment)
-        if (catInfo.type.includes('income') && !catInfo.group.includes('customer_revenue') && !catInfo.group.includes('customer_payment')) {
-             otherIncome += Math.abs(amount);
+        // --- Skip Balance Sheet/Contra Transactions ---
+        if (catInfo.group === 'opening_balance' || 
+            catInfo.group === 'customer_payment' || catInfo.group === 'supplier_payment' ||
+            catInfo.group.includes('loan') || catInfo.group.includes('chit') ||
+            catInfo.group === 'bank_ops' || catInfo.group === 'inventory_adjustment') {
+            return;
+        }
+
+        // --- Income ---
+        // Includes non-invoice revenue (biz_ops income)
+        if (catInfo.group === 'biz_ops' && amount > 0) {
+            otherIncome += amountMagnitude;
         }
         
-        // Capture operating expenses (rent, salaries, etc.)
+        // --- Expenses ---
         if (catInfo.group === 'biz_ops' && amount < 0) {
-            operatingExpenses += Math.abs(amount);
+            operatingExpenses += amountMagnitude;
         }
 
-        // Capture interest paid on business loans
+        // Interest paid is a specific, known P&L expense (stored as negative amount)
         if (catInfo.name.startsWith('Loan Interest Paid by Business')) {
-            interestPaid += Math.abs(amount);
+            interestPaid += amountMagnitude;
+        }
+        
+        // Purchases that are not COGS (e.g., direct expense purchases that aren't inventory items)
+        if (catInfo.group === 'supplier_expense' && !catInfo.isProductPurchase && amount < 0) {
+             operatingExpenses += amountMagnitude; 
         }
     });
 
@@ -5214,14 +5239,15 @@ function generatePnlReport(transactions, period) {
     const totalExpenses = operatingExpenses + interestPaid;
     const netProfit = grossProfit + otherIncome - totalExpenses;
 
+    // ... (HTML generation for P&L report) ...
     return `
         <h3 class="report-title">Profit & Loss Summary - ${period}</h3>
         <div class="pnl-summary-grid">
-            <div class="pnl-card"><h5>Total Revenue</h5><p class="positive">₹${totalRevenue.toFixed(2)}</p></div>
-            <div class="pnl-card"><h5>Cost of Goods Sold</h5><p class="negative">₹${totalCogs.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Total Revenue (from Invoices/Sales)</h5><p class="positive">₹${totalRevenue.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Cost of Goods Sold (COGS)</h5><p class="negative">₹${totalCogs.toFixed(2)}</p></div>
             <div class="pnl-card gross-profit"><h5>Gross Profit</h5><p>₹${grossProfit.toFixed(2)}</p></div>
-            <div class="pnl-card"><h5>Other Income</h5><p class="positive">₹${otherIncome.toFixed(2)}</p></div>
-            <div class="pnl-card"><h5>Operating Expenses</h5><p class="negative">₹${operatingExpenses.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Other Business Income</h5><p class="positive">₹${otherIncome.toFixed(2)}</p></div>
+            <div class="pnl-card"><h5>Operating Expenses (G&A)</h5><p class="negative">₹${operatingExpenses.toFixed(2)}</p></div>
             <div class="pnl-card"><h5>Interest Paid</h5><p class="negative">₹${interestPaid.toFixed(2)}</p></div>
         </div>
         <div class="pnl-summary-grid">
@@ -5229,7 +5255,7 @@ function generatePnlReport(transactions, period) {
                 <h5>Net Profit / (Loss)</h5><p class="${netProfit >= 0 ? 'positive' : 'negative'}">₹${netProfit.toFixed(2)}</p>
             </div>
         </div>
-        <p style="font-size: 0.8em; text-align: center; margin-top: 15px; color: #666;">Note: This is an estimated P&L statement. COGS is based on the cost price at the time of sale. Revenue is recognized on the invoice date.</p>
+        <p style="font-size: 0.8em; text-align: center; margin-top: 15px; color: #666;">Note: This is an estimated P&L statement. Revenue and Expenses are calculated based on transaction categories and invoice totals within the selected period.</p>
     `;
 }
 function generateCashFlowReport(transactions, period) {
@@ -5660,6 +5686,52 @@ function createRevenueChart() {
             interaction: { intersect: false, mode: 'index' },
         },
     });
+}
+function getLedgerAmount(tx) {
+    let amount = parseFloat(tx.amount || 0);
+    if (amount === 0) return 0;
+    
+    const catInfo = transactionCategories.find(c => c.name === tx.category);
+    if (!catInfo) {
+        console.warn(`[getLedgerAmount] Unknown category: ${tx.category}. Using stored amount.`);
+        return amount;
+    }
+    
+    // Only proceed if the transaction actually affects a cash or bank ledger.
+    if (!catInfo.affectsLedger || (!catInfo.affectsLedger.includes("cash") && !catInfo.affectsLedger.includes("bank"))) {
+        return 0; // Does not affect these ledgers
+    }
+
+    // --- Core Fix: Flip sign for customer-related Cash/Bank flows ---
+    // Customer transactions (which track AR) store:
+    // - Sale/Loan Out (increase AR) as Positive amount
+    // - Payment/Loan In (decrease AR) as Negative amount
+    // For Cash/Bank, the sign must reflect actual cash flow:
+    // - Sale/Loan Out (Cash OUT) must be Negative
+    // - Payment/Loan In (Cash IN) must be Positive
+    // Therefore, we flip the sign if it's a customer-related cash/bank flow.
+    if (tx.user_id && catInfo.relevantTo === 'customer') { 
+        // Exclude Opening Balance Adjustment, as it is signed correctly to initialize AR,
+        // but it doesn't affect Cash/Bank directly (only AR).
+        if (tx.category !== "Opening Balance Adjustment") { 
+             return -amount;
+        }
+    }
+    
+    // --- Special Contra/Internal Movements ---
+    // Contra movements need explicit handling in Ledger view, but the stored amount is usually:
+    // Cash Deposited to Bank (Cash OUT) -> Negative
+    // Cash Withdrawn from Bank (Cash IN) -> Positive
+    if (tx.category === "Cash Deposited to Bank") {
+        return -Math.abs(amount); // Cash decrease is always credit/negative
+    }
+    if (tx.category === "Cash Withdrawn from Bank") {
+        return Math.abs(amount); // Cash increase is always debit/positive
+    }
+
+    // For all other categories (Lenders, internal ops, Opening Balances for Cash/Bank) 
+    // the stored sign (positive=inflow, negative=outflow) is assumed to be correct.
+    return amount;
 }
 function createCategoryChart() {
     const canvas = document.getElementById("categoryChart");
