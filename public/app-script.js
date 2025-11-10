@@ -949,17 +949,20 @@ function updateDashboardCards() {
 
         // Check if transaction is within the current period
         if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd) {
-            if (catInfo.type.includes('income') && !tx.related_invoice_id) {
+            // FIX: Include 'receivable_increase' type, as this represents revenue recognized on credit sales
+            if ( (catInfo.type.includes('income') || catInfo.type.includes('receivable_increase')) && !tx.related_invoice_id) {
                 if(catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops') {
-                     currentRevenue += parseFloat(tx.amount || 0);
+                     // Use Math.abs() for robust summation of revenue magnitude
+                     currentRevenue += Math.abs(parseFloat(tx.amount || 0)); 
                 }
             }
         } 
         // Check if transaction is within the previous period for comparison
         else if (txDate >= ranges.previousStart && txDate <= ranges.previousEnd) { // Corrected to previousEnd
-            if (catInfo.type.includes('income') && !tx.related_invoice_id) {
+            // FIX: Include 'receivable_increase' type
+            if ( (catInfo.type.includes('income') || catInfo.type.includes('receivable_increase')) && !tx.related_invoice_id) {
                  if(catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops') {
-                    previousRevenue += parseFloat(tx.amount || 0);
+                    previousRevenue += Math.abs(parseFloat(tx.amount || 0)); // Use Math.abs()
                  }
             }
         }
@@ -5568,8 +5571,16 @@ function createRevenueChart() {
     allTransactionsCache.forEach(tx => {
         const txDate = new Date(tx.date);
         const catInfo = transactionCategories.find(c => c.name === tx.category);
-        if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd && catInfo && catInfo.type.includes('income') && !tx.related_invoice_id && (catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops')) {
-            const revenue = parseFloat(tx.amount || 0);
+        
+        // FIX: Include 'receivable_increase' type, which covers sales on credit transactions
+        const isRevenueTransaction = catInfo && 
+                                     (catInfo.type.includes('income') || catInfo.type.includes('receivable_increase')) && 
+                                     !tx.related_invoice_id && 
+                                     (catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops');
+        
+        if (txDate >= ranges.currentStart && txDate <= loopEndDate && isRevenueTransaction) {
+            // Use Math.abs() for robust summation of revenue magnitude
+            const revenue = Math.abs(parseFloat(tx.amount || 0)); 
             const dateStr = tx.date;
             let key;
             
