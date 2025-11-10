@@ -926,25 +926,34 @@ function updateDashboardCards() {
 
     // 1. Calculate revenue from invoices (Based on amount_before_tax in the invoice cache)
     invoicesCache.forEach(inv => {
-        const invDate = new Date(inv.invoice_date);
-        if (inv.status !== 'Void' && inv.status !== 'Draft') {
-            // Revenue is the taxable base (amount_before_tax)
-            const revenue = Math.abs(parseFloat(inv.amount_before_tax || 0)); 
-            
-            // Current Period
-            if (invDate >= ranges.currentStart && invDate <= ranges.currentEnd) {
-                currentRevenue += revenue;
-            } 
-            // Previous Period
-            else if (invDate >= ranges.previousStart && invDate <= ranges.previousEnd) { 
-                previousRevenue += revenue;
-            }
+        const invDate = new Date(inv.invoice_date + 'T00:00:00'); // Standardize to start of day
+        
+        // Ensure invDate is valid and within the required date range
+        if (isNaN(invDate.getTime()) || inv.status === 'Void' || inv.status === 'Draft') {
+            return;
+        }
+
+        // Revenue is the taxable base (amount_before_tax)
+        const revenue = Math.abs(parseFloat(inv.amount_before_tax || 0)); 
+        
+        // Current Period
+        if (invDate >= ranges.currentStart && invDate <= ranges.currentEnd) {
+            currentRevenue += revenue;
+        } 
+        // Previous Period
+        else if (invDate >= ranges.previousStart && invDate <= ranges.previousEnd) { 
+            previousRevenue += revenue;
         }
     });
     
     // 2. Add revenue from direct transactions (Excluding invoice-related, payments, and opening balances)
     allTransactionsCache.forEach(tx => {
-        const txDate = new Date(tx.date);
+        const txDate = new Date(tx.date + 'T00:00:00'); // Standardize to start of day
+        
+        if (isNaN(txDate.getTime())) {
+            return;
+        }
+        
         const catInfo = transactionCategories.find(c => c.name === tx.category);
 
         // Skip non-revenue transactions: payments, returns, and balance sheet movements
@@ -1006,7 +1015,7 @@ function updateDashboardCards() {
     const totalProductsEl = document.getElementById("totalProducts");
     if(totalProductsEl) totalProductsEl.textContent = productsCache.length;
 
-    // 4. Pending Invoices KPI
+    // 4. Pending Invoices KPI (Calculated based on Gross Total - Paid Amount)
     const pendingInv = invoicesCache.filter(inv => inv.status !== "Paid" && inv.status !== "Void");
     const pendingAmt = pendingInv.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0) - parseFloat(inv.paid_amount || 0), 0);
     
@@ -3020,6 +3029,7 @@ async function loadUserTransactionHistory(
     tableFoot.innerHTML = "";
 
     try {
+        // Ensure data caches are populated
         if (allTransactionsCache.length === 0 && !isLoading.transactions) await loadAllTransactions();
         if (usersDataCache.length === 0 && !isLoading.users) await loadUsers();
         if (invoicesCache.length === 0 && !isLoading.invoices) await loadInvoices();
@@ -3030,19 +3040,19 @@ async function loadUserTransactionHistory(
             return;
         }
 
-        // Only include actual transactions related to this user (user_id is set)
+        // Filter transactions by user ID
         let allEntries = [...allTransactionsCache.filter(tx => tx.user_id === userId)];
         
+        // Filter by category group (e.g., only show loans)
         const filteredEntries = categoryGroupFilter === 'all'
             ? allEntries
             : allEntries.filter(entry => {
                 const categoryInfo = transactionCategories.find(cat => cat.name === entry.category);
                 if (!categoryInfo || !categoryInfo.group) return false;
                 
+                // Group consolidation for display filters
                 if (categoryGroupFilter === "customer_loan") return ["customer_loan_out", "customer_loan_in"].includes(categoryInfo.group);
                 if (categoryGroupFilter === "customer_chit") return ["customer_chit_in", "customer_chit_out"].includes(categoryInfo.group);
-                if (categoryGroupFilter === "customer_revenue") return ["customer_revenue"].includes(categoryInfo.group);
-                if (categoryGroupFilter === "customer_payment") return ["customer_payment"].includes(categoryInfo.group);
                 
                 return categoryInfo.group === categoryGroupFilter;
             });
@@ -3054,31 +3064,21 @@ async function loadUserTransactionHistory(
 
         const firstTransactionDate = filteredEntries.length > 0 ? filteredEntries[0].date : new Date().toISOString().split('T')[0];
         
-        // 1. Starting Point: Initial Balance from User Profile
+        // --- 1. Calculate Historical Opening Balance (Before first displayed transaction) ---
         let runningBalance = parseFloat(customer.initial_balance || 0);
         
-        // 2. Adjust historical balances before the first displayed date (crucial for retroactive correction)
+        // Apply historical corrections for transactions that happened BEFORE the start date of the displayed list
         allTransactionsCache
             .filter(tx => tx.user_id === userId && tx.date < firstTransactionDate)
             .forEach(tx => { 
-                let amount = parseFloat(tx.amount || 0);
-
-                // *** RETROACTIVE SIGN CORRECTION LOGIC for Payments Received ***
-                const catInfo = transactionCategories.find(c => c.name === tx.category);
-                if (catInfo && catInfo.group === 'customer_payment' && amount > 0) {
-                    // Payment Received was wrongly stored as positive; treat as negative (Credit)
-                    amount = -amount;
-                }
-                // *** END CORRECTION ***
-
-                runningBalance += amount; 
+                // Use the dedicated helper to get the true effect on AR/Receivable
+                runningBalance += getReceivableAmount(tx); 
             });
 
         
         let totalDebits = 0;
         let totalCredits = 0;
         
-        // FIX 1: Use formatLedgerDate helper
         const formattedOpeningDate = formatLedgerDate(firstTransactionDate);
 
         const openingRow = tableBody.insertRow();
@@ -3093,30 +3093,25 @@ async function loadUserTransactionHistory(
         if (filteredEntries.length === 0) {
             tableBody.innerHTML += `<tr><td colspan="5" style="text-align:center;">No transactions found for ${userName} with selected filter.</td></tr>`;
         } else {
+            // --- 2. Process Displayed Entries ---
             filteredEntries.forEach((tx) => {
                 const row = tableBody.insertRow();
                 let debit = "";
                 let credit = "";
-                let amount = parseFloat(tx.amount || 0); // Stored amount
-
-                // *** APPLY CORRECTION FOR DISPLAYED ENTRIES ***
-                const catInfo = transactionCategories.find(c => c.name === tx.category);
-                if (catInfo && catInfo.group === 'customer_payment' && amount > 0) {
-                    // Payment Received was wrongly stored as positive; treat as negative (Credit)
-                    amount = -amount;
-                }
-                // *** END CORRECTION ***
                 
-                if (amount > 0) {
-                    debit = amount.toFixed(2);
-                    totalDebits += amount;
+                // Get the corrected amount for the Accounts Receivable Ledger
+                let correctedAmount = getReceivableAmount(tx);
+                
+                if (correctedAmount > 0) {
+                    debit = correctedAmount.toFixed(2);
+                    totalDebits += correctedAmount;
                 } else {
-                    credit = Math.abs(amount).toFixed(2);
-                    totalCredits += Math.abs(amount);
+                    credit = Math.abs(correctedAmount).toFixed(2);
+                    totalCredits += Math.abs(correctedAmount);
                 }
                 
                 // Update running balance
-                runningBalance += amount;
+                runningBalance += correctedAmount;
                 
                 let particulars = `${tx.category || "N/A"}`;
                 if (tx.description) particulars += ` (${tx.description})`;
@@ -3138,9 +3133,7 @@ async function loadUserTransactionHistory(
                          particulars += ` (Payment for Invoice ${invoice.invoice_number})`;
                     }
                 }
-
                 
-                // FIX 1: Use formatLedgerDate for display
                 const formattedTxDate = formatLedgerDate(tx.date);
 
                 row.innerHTML = `
