@@ -856,43 +856,50 @@ function setupNavigation() {
 }
 function getPeriodDateRanges(period) {
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // Start of TODAY in local time, used to calculate start/end of period
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); 
     let currentStart, currentEnd, previousStart, previousEnd;
 
     switch (period) {
         case 'last_month':
             currentStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-            currentEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+            currentEnd = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59, 999); 
             previousStart = new Date(today.getFullYear(), today.getMonth() - 2, 1);
-            previousEnd = new Date(today.getFullYear(), today.getMonth() - 1, 0);
+            previousEnd = new Date(today.getFullYear(), today.getMonth() - 1, 0, 23, 59, 59, 999);
             break;
 
         case 'this_quarter':
             const quarter = Math.floor(today.getMonth() / 3);
             currentStart = new Date(today.getFullYear(), quarter * 3, 1);
-            currentEnd = new Date(today.getFullYear(), quarter * 3 + 3, 0);
+            currentEnd = new Date(today.getFullYear(), quarter * 3 + 3, 0, 23, 59, 59, 999);
             previousStart = new Date(today.getFullYear(), (quarter - 1) * 3, 1);
-            previousEnd = new Date(today.getFullYear(), quarter * 3, 0);
+            previousEnd = new Date(today.getFullYear(), quarter * 3, 0, 23, 59, 59, 999);
             break;
 
         case 'this_year':
             currentStart = new Date(today.getFullYear(), 0, 1);
-            currentEnd = new Date(today.getFullYear(), 11, 31);
+            currentEnd = new Date(today.getFullYear(), 11, 31, 23, 59, 59, 999);
             previousStart = new Date(today.getFullYear() - 1, 0, 1);
-            previousEnd = new Date(today.getFullYear() - 1, 11, 31);
+            previousEnd = new Date(today.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
             break;
 
         case 'this_month':
         default:
             currentStart = new Date(today.getFullYear(), today.getMonth(), 1);
-            currentEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+            currentEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
             previousStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-            previousEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+            previousEnd = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59, 999);
             break;
     }
+    
+    // Ensure the currentEnd does not go past the current moment
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+    if (currentEnd > endOfToday) {
+        currentEnd = endOfToday;
+    }
+    
     return { currentStart, currentEnd, previousStart, previousEnd };
 }
-
 function calculatePercentageChange(current, previous) {
     if (previous === 0) {
         if (current > 0) return 100.0;
@@ -906,7 +913,7 @@ function calculatePercentageChange(current, previous) {
 function updateDashboardCards() {
     const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
 
-    // --- Update Navigation Counts ---
+    // --- Update Navigation Counts (Sidebar badges) ---
     const navCustomerCount = document.getElementById('navCustomerCount');
     const navSupplierCount = document.getElementById('navSupplierCount');
     const navInventoryCount = document.getElementById('navInventoryCount');
@@ -924,16 +931,16 @@ function updateDashboardCards() {
     let previousRevenue = 0;
     let newCustomersCurrent = 0;
 
-    // 1. Calculate revenue from invoices (Based on amount_before_tax in the invoice cache)
+    // 1. Calculate revenue from invoices (Based on amount_before_tax)
     invoicesCache.forEach(inv => {
-        const invDate = new Date(inv.invoice_date + 'T00:00:00'); // Standardize to start of day
+        // FIX: Append T00:00:00 to treat date as local midnight, preventing timezone shift
+        const invDate = new Date(inv.invoice_date + 'T00:00:00'); 
         
-        // Ensure invDate is valid and within the required date range
         if (isNaN(invDate.getTime()) || inv.status === 'Void' || inv.status === 'Draft') {
             return;
         }
 
-        // Revenue is the taxable base (amount_before_tax)
+        // Revenue is the magnitude of the taxable base
         const revenue = Math.abs(parseFloat(inv.amount_before_tax || 0)); 
         
         // Current Period
@@ -946,9 +953,10 @@ function updateDashboardCards() {
         }
     });
     
-    // 2. Add revenue from direct transactions (Excluding invoice-related, payments, and opening balances)
+    // 2. Add revenue from direct transactions (Non-invoiced income)
     allTransactionsCache.forEach(tx => {
-        const txDate = new Date(tx.date + 'T00:00:00'); // Standardize to start of day
+        // FIX: Append T00:00:00 to treat date as local midnight
+        const txDate = new Date(tx.date + 'T00:00:00'); 
         
         if (isNaN(txDate.getTime())) {
             return;
@@ -956,7 +964,7 @@ function updateDashboardCards() {
         
         const catInfo = transactionCategories.find(c => c.name === tx.category);
 
-        // Skip non-revenue transactions: payments, returns, and balance sheet movements
+        // Skip non-revenue transactions: payments, returns, and invoice-linked
         if (!catInfo || 
             catInfo.group === 'opening_balance' || 
             catInfo.group === 'customer_payment' || 
@@ -973,11 +981,9 @@ function updateDashboardCards() {
                                      (catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops');
         
         if (isRevenueTransaction) {
-            // Current Period
             if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd) {
                 currentRevenue += revenue; 
             } 
-            // Previous Period
             else if (txDate >= ranges.previousStart && txDate <= ranges.previousEnd) { 
                 previousRevenue += revenue;
             }
@@ -986,7 +992,8 @@ function updateDashboardCards() {
     
     // 3. New Customer Count
     customersOnly.forEach(user => {
-        const joinDate = new Date(user.created_at);
+        // Use the date part of created_at
+        const joinDate = new Date(user.created_at.split('T')[0] + 'T00:00:00');
         if (joinDate >= ranges.currentStart && joinDate <= ranges.currentEnd) {
             newCustomersCurrent++;
         }
@@ -1015,7 +1022,7 @@ function updateDashboardCards() {
     const totalProductsEl = document.getElementById("totalProducts");
     if(totalProductsEl) totalProductsEl.textContent = productsCache.length;
 
-    // 4. Pending Invoices KPI (Calculated based on Gross Total - Paid Amount)
+    // 4. Pending Invoices KPI
     const pendingInv = invoicesCache.filter(inv => inv.status !== "Paid" && inv.status !== "Void");
     const pendingAmt = pendingInv.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0) - parseFloat(inv.paid_amount || 0), 0);
     
@@ -1048,6 +1055,7 @@ function updateDashboardCards() {
     const todayAvgOrderEl = document.getElementById('todayAvgOrder');
     if(todayAvgOrderEl) todayAvgOrderEl.textContent = `₹${avgOrderValue.toFixed(2)}`;
 }
+
 async function populateUserDropdown() {
     try {
         if (!Array.isArray(usersDataCache) || (usersDataCache.length === 0 && !isLoading.users)) {
