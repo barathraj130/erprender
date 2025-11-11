@@ -856,50 +856,43 @@ function setupNavigation() {
 }
 function getPeriodDateRanges(period) {
     const now = new Date();
-    // Start of TODAY in local time, used to calculate start/end of period
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); 
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     let currentStart, currentEnd, previousStart, previousEnd;
 
     switch (period) {
         case 'last_month':
             currentStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-            currentEnd = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59, 999); 
+            currentEnd = new Date(today.getFullYear(), today.getMonth(), 0);
             previousStart = new Date(today.getFullYear(), today.getMonth() - 2, 1);
-            previousEnd = new Date(today.getFullYear(), today.getMonth() - 1, 0, 23, 59, 59, 999);
+            previousEnd = new Date(today.getFullYear(), today.getMonth() - 1, 0);
             break;
 
         case 'this_quarter':
             const quarter = Math.floor(today.getMonth() / 3);
             currentStart = new Date(today.getFullYear(), quarter * 3, 1);
-            currentEnd = new Date(today.getFullYear(), quarter * 3 + 3, 0, 23, 59, 59, 999);
+            currentEnd = new Date(today.getFullYear(), quarter * 3 + 3, 0);
             previousStart = new Date(today.getFullYear(), (quarter - 1) * 3, 1);
-            previousEnd = new Date(today.getFullYear(), quarter * 3, 0, 23, 59, 59, 999);
+            previousEnd = new Date(today.getFullYear(), quarter * 3, 0);
             break;
 
         case 'this_year':
             currentStart = new Date(today.getFullYear(), 0, 1);
-            currentEnd = new Date(today.getFullYear(), 11, 31, 23, 59, 59, 999);
+            currentEnd = new Date(today.getFullYear(), 11, 31);
             previousStart = new Date(today.getFullYear() - 1, 0, 1);
-            previousEnd = new Date(today.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
+            previousEnd = new Date(today.getFullYear() - 1, 11, 31);
             break;
 
         case 'this_month':
         default:
             currentStart = new Date(today.getFullYear(), today.getMonth(), 1);
-            currentEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+            currentEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
             previousStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-            previousEnd = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59, 999);
+            previousEnd = new Date(today.getFullYear(), today.getMonth(), 0);
             break;
     }
-    
-    // Ensure the currentEnd does not go past the current moment
-    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
-    if (currentEnd > endOfToday) {
-        currentEnd = endOfToday;
-    }
-    
     return { currentStart, currentEnd, previousStart, previousEnd };
 }
+
 function calculatePercentageChange(current, previous) {
     if (previous === 0) {
         if (current > 0) return 100.0;
@@ -913,7 +906,7 @@ function calculatePercentageChange(current, previous) {
 function updateDashboardCards() {
     const customersOnly = usersDataCache.filter(user => user.role !== 'admin');
 
-    // --- Update Navigation Counts (Sidebar badges) ---
+    // --- Update Navigation Counts ---
     const navCustomerCount = document.getElementById('navCustomerCount');
     const navSupplierCount = document.getElementById('navSupplierCount');
     const navInventoryCount = document.getElementById('navInventoryCount');
@@ -931,16 +924,16 @@ function updateDashboardCards() {
     let previousRevenue = 0;
     let newCustomersCurrent = 0;
 
-    // 1. Calculate revenue from invoices (Based on amount_before_tax)
+    // 1. Calculate revenue from invoices (Based on amount_before_tax in the invoice cache)
     invoicesCache.forEach(inv => {
-        // FIX: Append T00:00:00 to treat date as local midnight, preventing timezone shift
-        const invDate = new Date(inv.invoice_date + 'T00:00:00'); 
+        const invDate = new Date(inv.invoice_date + 'T00:00:00'); // Standardize to start of day
         
+        // Ensure invDate is valid and within the required date range
         if (isNaN(invDate.getTime()) || inv.status === 'Void' || inv.status === 'Draft') {
             return;
         }
 
-        // Revenue is the magnitude of the taxable base
+        // Revenue is the taxable base (amount_before_tax)
         const revenue = Math.abs(parseFloat(inv.amount_before_tax || 0)); 
         
         // Current Period
@@ -953,10 +946,9 @@ function updateDashboardCards() {
         }
     });
     
-    // 2. Add revenue from direct transactions (Non-invoiced income)
+    // 2. Add revenue from direct transactions (Excluding invoice-related, payments, and opening balances)
     allTransactionsCache.forEach(tx => {
-        // FIX: Append T00:00:00 to treat date as local midnight
-        const txDate = new Date(tx.date + 'T00:00:00'); 
+        const txDate = new Date(tx.date + 'T00:00:00'); // Standardize to start of day
         
         if (isNaN(txDate.getTime())) {
             return;
@@ -964,7 +956,7 @@ function updateDashboardCards() {
         
         const catInfo = transactionCategories.find(c => c.name === tx.category);
 
-        // Skip non-revenue transactions: payments, returns, and invoice-linked
+        // Skip non-revenue transactions: payments, returns, and balance sheet movements
         if (!catInfo || 
             catInfo.group === 'opening_balance' || 
             catInfo.group === 'customer_payment' || 
@@ -981,9 +973,11 @@ function updateDashboardCards() {
                                      (catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops');
         
         if (isRevenueTransaction) {
+            // Current Period
             if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd) {
                 currentRevenue += revenue; 
             } 
+            // Previous Period
             else if (txDate >= ranges.previousStart && txDate <= ranges.previousEnd) { 
                 previousRevenue += revenue;
             }
@@ -992,8 +986,7 @@ function updateDashboardCards() {
     
     // 3. New Customer Count
     customersOnly.forEach(user => {
-        // Use the date part of created_at
-        const joinDate = new Date(user.created_at.split('T')[0] + 'T00:00:00');
+        const joinDate = new Date(user.created_at);
         if (joinDate >= ranges.currentStart && joinDate <= ranges.currentEnd) {
             newCustomersCurrent++;
         }
@@ -1022,7 +1015,7 @@ function updateDashboardCards() {
     const totalProductsEl = document.getElementById("totalProducts");
     if(totalProductsEl) totalProductsEl.textContent = productsCache.length;
 
-    // 4. Pending Invoices KPI
+    // 4. Pending Invoices KPI (Calculated based on Gross Total - Paid Amount)
     const pendingInv = invoicesCache.filter(inv => inv.status !== "Paid" && inv.status !== "Void");
     const pendingAmt = pendingInv.reduce((sum, inv) => sum + parseFloat(inv.total_amount || 0) - parseFloat(inv.paid_amount || 0), 0);
     
@@ -1055,7 +1048,6 @@ function updateDashboardCards() {
     const todayAvgOrderEl = document.getElementById('todayAvgOrder');
     if(todayAvgOrderEl) todayAvgOrderEl.textContent = `₹${avgOrderValue.toFixed(2)}`;
 }
-
 async function populateUserDropdown() {
     try {
         if (!Array.isArray(usersDataCache) || (usersDataCache.length === 0 && !isLoading.users)) {
@@ -4694,6 +4686,11 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             return;
         }
 
+        // Use the company name as the watermark text
+        const watermarkText = companyProfile.company_name ? 
+                              `DRAFT - ${companyProfile.company_name.toUpperCase()}` : 
+                              `ERP DRAFT`;
+
         const printWindow = window.open('', '_blank', 'height=800,width=1000');
         if (!printWindow) {
             alert("Could not open print window. Please disable your pop-up blocker.");
@@ -4702,46 +4699,64 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
 
         printWindow.document.write('<!DOCTYPE html><html><head><title>Invoice ' + invoiceData.invoice_number + '</title>');
         
-        // --- REVISED CSS FOR SINGLE PAGE FIT ---
+        // --- REVISED CSS FOR SINGLE PAGE FIT (Updated for Watermark) ---
         printWindow.document.write(`
             <style>
                 body { font-family: "Arial", sans-serif; font-size: 8.5pt; margin: 0; color: #000; }
                 @page { size: A4; margin: 0; }
-                .print-container { width: 210mm; padding: 5mm; box-sizing: border-box; } /* Removed fixed height 297mm */
-                .invoice-box { border: 1px solid #000; padding: 2mm; box-sizing: border-box; } /* Removed fixed height/flex */
+                .print-container { width: 210mm; padding: 5mm; box-sizing: border-box; position: relative; } /* Added position: relative */
+                .invoice-box { border: 1px solid #000; padding: 2mm; box-sizing: border-box; }
                 .text-center { text-align: center; } .text-right { text-align: right; } .font-bold { font-weight: bold; }
                 
-                .company-name { font-size: 14pt; font-weight: bold; margin-bottom: 1mm; } /* Reduced size */
-                .invoice-title { font-size: 12pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; margin: 1mm 0; } /* Reduced size and padding */
+                /* --- WATERMARK STYLES --- */
+                .watermark {
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%) rotate(-45deg);
+                    font-size: 40pt; /* Slightly reduced size for longer names */
+                    font-weight: 800;
+                    color: rgba(0, 0, 0, 0.1);
+                    opacity: 0.3; /* Increased opacity slightly for visibility */
+                    pointer-events: none;
+                    white-space: nowrap;
+                    z-index: 10;
+                    width: 100%; /* Ensures long text can stretch across */
+                    text-align: center;
+                }
+                /* --- END WATERMARK STYLES --- */
+
+                .company-name { font-size: 14pt; font-weight: bold; margin-bottom: 1mm; } 
+                .invoice-title { font-size: 12pt; font-weight: bold; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1mm 0; margin: 1mm 0; } 
                 
                 .details-table td { padding: 0.5mm 1mm; font-size: 8.5pt; }
                 .label { font-weight: bold; }
                 
                 .address-grid { margin-top: 1mm; border-top: 1px solid #000; border-bottom: 1px solid #000; width: 100%; border-collapse: collapse; }
-                .address-grid td { width: 50%; padding: 1mm 2mm; vertical-align: top; border: none; } /* Reduced padding */
+                .address-grid td { width: 50%; padding: 1mm 2mm; vertical-align: top; border: none; }
                 .address-grid td:first-child { border-right: 1px solid #000; }
                 .address-title { text-decoration: underline; font-weight: bold; margin-bottom: 1mm; display: block; }
                 
                 .items-table { width: 100%; border-collapse: collapse; margin-top: 2mm; }
-                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 0.8mm 1mm; word-wrap: break-word; line-height: 1.2; } /* Reduced padding/line height */
+                .items-table th, .items-table td { border: 1px solid #000; font-size: 8.5pt; padding: 0.8mm 1mm; word-wrap: break-word; line-height: 1.2; }
                 .items-table thead th { background-color: #f2f2f2; }
                 .items-table tfoot td { font-weight: bold; }
                 
                 .footer-section { padding-top: 2mm; }
                 .totals-summary { width: 50%; float: right; border-collapse: collapse; margin-bottom: 1mm;}
-                .totals-summary td { padding: 0.5mm 2mm; border: none; } /* Reduced padding */
+                .totals-summary td { padding: 0.5mm 2mm; border: none; }
                 .totals-summary tr:first-child td { border-top: 1px solid #000; }
                 .totals-summary tr:last-child td { border-top: 1px solid #000; }
                 
                 .grand-total td { font-weight: bold; }
-                .final-footer { width: 100%; padding-top: 5mm; display: table; table-layout: fixed; } /* Use table layout for better print positioning */
+                .final-footer { width: 100%; padding-top: 5mm; display: table; table-layout: fixed; } 
                 .final-footer > div { display: table-cell; width: 50%; vertical-align: bottom; }
                 .signature { text-align: right; }
             </style>
         `);
         // --- END REVISED CSS ---
 
-        printWindow.document.write('</head><body><div class="print-container"><div class="invoice-box">');
+        printWindow.document.write('</head><body><div class="print-container"><div class="watermark">' + watermarkText + '</div><div class="invoice-box">');
         
         let headerHtml = `
             <div class="text-center">
