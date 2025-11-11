@@ -4671,6 +4671,8 @@ async function printCurrentInvoice() {
         alert("Please save the invoice first or ensure an invoice is loaded in the modal to print.");
     }
 }
+// app-script.js (Full corrected function)
+
 async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
     try {
         const [invoiceRes, companyProfile] = await Promise.all([
@@ -4686,10 +4688,11 @@ async function generateAndShowPrintableInvoice(invoiceIdToPrint) {
             return;
         }
 
-        // Use the company name as the watermark text
+        // --- CORRECTION: Remove "DRAFT" from the watermark text ---
         const watermarkText = companyProfile.company_name ? 
-                              `DRAFT - ${companyProfile.company_name.toUpperCase()}` : 
-                              `ERP DRAFT`;
+                              companyProfile.company_name.toUpperCase() : 
+                              `ERP WATERMARK`;
+        // --- END CORRECTION ---
 
         const printWindow = window.open('', '_blank', 'height=800,width=1000');
         if (!printWindow) {
