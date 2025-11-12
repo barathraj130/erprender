@@ -331,6 +331,7 @@ async function seedDefaultChartOfAccounts(client, companyId) {
     ];
     const ledgers = [
         { name: 'Profit & Loss A/c', is_default: true, groupName: 'Capital Account' }, // <-- Assigned to Capital Account
+        { name: 'Owner\'s Capital A/c', is_default: true, groupName: 'Capital Account' }, // <-- NEW: For owner deposits/withdrawals
         { name: 'Cash', groupName: 'Cash-in-Hand', is_default: true },
         { name: 'Sales', groupName: 'Sales Accounts', is_default: true }, { name: 'Purchase', groupName: 'Purchase Accounts', is_default: true },
         { name: 'CGST', groupName: 'Duties & Taxes', is_default: true }, { name: 'SGST', groupName: 'Duties & Taxes', is_default: true },

@@ -69,6 +69,13 @@ const transactionCategories = [
     { name: "Product Return from Customer (Credit Note)", type: "receivable_decrease", group: "customer_return", isProductSale: true, affectsLedger: "none", relevantTo: "customer" },
     { name: "Product Return from Customer (Refund via Cash)", type: "cash_expense", group: "customer_return", isProductSale: true, affectsLedger: "cash", relevantTo: "customer" },
     { name: "Product Return from Customer (Refund via Bank)", type: "bank_expense", group: "customer_return", isProductSale: true, affectsLedger: "bank", relevantTo: "customer" },
+    
+    // --- Capital Transactions --- (NEW)
+    { name: "Owner's Capital Deposit (to Bank)", type: "bank_income_capital", group: "capital_in", affectsLedger: "bank", relevantTo: "none" },
+    { name: "Owner's Capital Deposit (to Cash)", type: "cash_income_capital", group: "capital_in", affectsLedger: "cash", relevantTo: "none" },
+    { name: "Owner's Drawing/Withdrawal (from Bank)", type: "bank_expense_capital", group: "capital_out", affectsLedger: "bank", relevantTo: "none" },
+    { name: "Owner's Drawing/Withdrawal (from Cash)", type: "cash_expense_capital", group: "capital_out", affectsLedger: "cash", relevantTo: "none" },
+    
     // --- Supplier Transactions ---
     // Purchases from Suppliers
     { name: "Purchase from Supplier (On Credit)", type: "payable_increase", group: "supplier_expense", isProductPurchase: true, affectsLedger: "none", relevantTo: "lender" },
@@ -101,6 +108,7 @@ const transactionCategories = [
     { name: "Business Receives Chit Payout (to Bank)", type: "bank_income", group: "biz_chit_in", affectsLedger: "bank", relevantTo: "lender" },
     { name: "Post-Billing Discount Allowed", type: "receivable_decrease", group: "customer_adjustment", affectsLedger: "none", relevantTo: "customer" }, // NEW
     { name: "Invoice Adjustment/Discount", type: "receivable_decrease", group: "customer_adjustment", affectsLedger: "none", relevantTo: "customer" },
+    
     // --- Internal & Operational Transactions ---
     // Bank & Cash Contra
     { name: "Cash Deposited to Bank", type: "neutral_cash_movement", group: "bank_ops", affectsLedger: "both_cash_out_bank_in", relevantTo: "none" },
@@ -139,7 +147,11 @@ const baseTransactionCategories = [
     { name: "Product Return from Customer (Refund)", group: "customer_return", isProductSale: true, relevantTo: "customer", needsPaymentMode: true, defaultSignForParty: 1, categoryPattern: "Product Return from Customer (Refund via {PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" }, // Business pays out
     { name: "Product Return from Customer (Credit Note)", group: "customer_return", isProductSale: true, relevantTo: "customer", needsPaymentMode: false, defaultSignForParty: -1, categoryPattern: "Product Return from Customer (Credit Note)", affectsLedgerPattern: "none" },
     { name: "Amount Received in Bank (from Customer/Other)", group: "customer_payment", relevantTo: "customer", needsPaymentMode: false, defaultSignForParty: -1, categoryPattern: "Amount Received in Bank (from Customer/Other)", affectsLedgerPattern: "bank" },
-    { name: "Sale to Customer (Cash/Direct)", group: "customer_revenue", isProductSale: true, relevantTo: "customer", needsPaymentMode: false, defaultSignForParty: 1, categoryPattern: "Sale to Customer (Cash/Direct)", affectsLedgerPattern: "cash" },
+    { name: "Sale to Customer (Cash/Direct)", group: "customer_revenue", isProductSale: true, relevantTo: "customer", needsPaymentMode: true, defaultSignForParty: 1, categoryPattern: "Sale to Customer ({PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
+
+    // -- Capital -- (New entries added here)
+    { name: "Owner's Capital Deposit", group: "capital_in", relevantTo: "none", needsPaymentMode: true, defaultSignForParty: 0, categoryPattern: "Owner's Capital Deposit (to {PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
+    { name: "Owner's Drawing/Withdrawal", group: "capital_out", relevantTo: "none", needsPaymentMode: true, defaultSignForParty: 0, categoryPattern: "Owner's Drawing/Withdrawal (from {PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
 
     // -- Supplier --
     { name: "Purchase from Supplier", group: "supplier_expense", isProductPurchase: true, relevantTo: "lender", needsPaymentMode: true, defaultSignForParty: 1, categoryPattern: "Purchase from Supplier ({PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
