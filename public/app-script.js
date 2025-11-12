@@ -939,9 +939,10 @@ function updateDashboardCards() {
     // 1. Calculate revenue from invoices (Based on amount_before_tax in the invoice cache)
     invoicesCache.forEach(inv => {
         const invDate = new Date(inv.invoice_date + 'T00:00:00'); // Standardize to start of day
+        const invType = inv.invoice_type || 'TAX_INVOICE';
         
-        // Ensure invDate is valid and within the required date range
-        if (isNaN(invDate.getTime()) || inv.status === 'Void' || inv.status === 'Draft') {
+        // Exclude invalid dates, voids, drafts, and sales returns
+        if (isNaN(invDate.getTime()) || inv.status === 'Void' || inv.status === 'Draft' || invType === 'SALES_RETURN') {
             return;
         }
 
@@ -958,7 +959,10 @@ function updateDashboardCards() {
         }
     });
     
-    // 2. Add revenue from direct transactions (Excluding invoice-related, payments, and opening balances)
+    // 2. Add revenue from direct transactions (Excluding invoice-related, payments, and balance sheet movements)
+    const now = new Date();
+    const loopEndDate = now < ranges.currentEnd ? now : ranges.currentEnd;
+
     allTransactionsCache.forEach(tx => {
         const txDate = new Date(tx.date + 'T00:00:00'); // Standardize to start of day
         
@@ -968,25 +972,28 @@ function updateDashboardCards() {
         
         const catInfo = transactionCategories.find(c => c.name === tx.category);
 
-        // Skip non-revenue transactions: payments, returns, and balance sheet movements
+        // Skip non-revenue transactions: 
         if (!catInfo || 
             catInfo.group === 'opening_balance' || 
             catInfo.group === 'customer_payment' || 
             catInfo.group === 'customer_return' || 
-            tx.related_invoice_id) {
+            catInfo.group === 'supplier_payment' || 
+            tx.related_invoice_id || // Exclude transactions tied to an invoice
+            catInfo.group.includes('loan') || catInfo.group.includes('chit') || // Exclude financing movements
+            catInfo.group === 'inventory_adjustment' || catInfo.group === 'bank_ops' // Exclude contra/stock movements
+            ) {
             return; 
         }
 
-        // Revenue is the magnitude of the transaction amount
         const revenue = Math.abs(parseFloat(tx.amount || 0)); 
         
-        // A revenue transaction is any income or receivable increase not related to an invoice
+        // A revenue transaction is any income (excluding specific financing/loan income)
         const isRevenueTransaction = (catInfo.type.includes('income') || catInfo.type.includes('receivable_increase')) && 
                                      (catInfo.group === 'customer_revenue' || catInfo.group === 'biz_ops');
         
         if (isRevenueTransaction) {
             // Current Period
-            if (txDate >= ranges.currentStart && txDate <= ranges.currentEnd) {
+            if (txDate >= ranges.currentStart && txDate <= loopEndDate) {
                 currentRevenue += revenue; 
             } 
             // Previous Period
@@ -1316,6 +1323,57 @@ function showLedger(type) {
         loadBankLedger();
     }
 }
+function getLedgerAmount(tx, calculatingLedgerType) {
+    let amount = parseFloat(tx.amount || 0);
+    if (amount === 0) return 0;
+    
+    const catInfo = transactionCategories.find(c => c.name === tx.category);
+    if (!catInfo) {
+        console.warn(`[getLedgerAmount] Unknown category: ${tx.category}. Using stored amount.`);
+        return amount; // Fallback, though usually undesirable
+    }
+    
+    const magnitude = Math.abs(amount);
+
+    // --- 1. Contra movements (Cash <-> Bank) ---
+    // Stored amount is expected to be positive magnitude for contra entries.
+    if (catInfo.affectsLedger.startsWith('both')) {
+        if (catInfo.affectsLedger === 'both_cash_out_bank_in') { // Cash Deposited to Bank
+            return calculatingLedgerType === 'cash' ? -magnitude : magnitude; // Cash OUT (-), Bank IN (+)
+        }
+        if (catInfo.affectsLedger === 'both_cash_in_bank_out') { // Cash Withdrawn from Bank
+            return calculatingLedgerType === 'cash' ? magnitude : -magnitude; // Cash IN (+), Bank OUT (-)
+        }
+        // If it's a dual entry, but doesn't match the specific ledger we are calculating, ignore it.
+        if (!catInfo.affectsLedger.includes(calculatingLedgerType)) return 0;
+    }
+
+    // --- 2. Customer movements affecting Cash/Bank ---
+    // If a transaction is customer-related (relevantTo: 'customer') and affects a bank/cash ledger, 
+    // the stored sign (which reflects AR ledger: Sale +, Payment -) must be flipped to reflect Cash Flow (Sale -, Payment +).
+    if (tx.user_id && catInfo.relevantTo === 'customer' && catInfo.affectsLedger.includes(calculatingLedgerType)) { 
+        if (tx.category !== "Opening Balance Adjustment") { 
+            return -amount;
+        }
+    }
+
+    // --- 3. Capital Movements (Owner Deposit/Withdrawal) ---
+    // Stored amount is expected to be positive magnitude.
+    if (catInfo.group === 'capital_in' && catInfo.affectsLedger.includes(calculatingLedgerType)) {
+        return magnitude; // Deposit is always INFLOW (Debit)
+    }
+    if (catInfo.group === 'capital_out' && catInfo.affectsLedger.includes(calculatingLedgerType)) {
+        return -magnitude; // Withdrawal is always OUTFLOW (Credit)
+    }
+    
+    // --- 4. Other movements (Lender Txns, Biz Ops, Opening Balances) ---
+    // For these, the stored amount sign is assumed correct for the relevant ledger (Debit=+, Credit=-).
+    if (catInfo.affectsLedger.includes(calculatingLedgerType)) {
+        return amount;
+    }
+    
+    return 0;
+}
 async function loadCashLedger(date = null) {
     // Determine the selected date string (YYYY-MM-DD)
     const selectedDate =
@@ -1357,8 +1415,8 @@ async function loadCashLedger(date = null) {
                 return false;
             })
             .forEach((t) => {
-                // Use the new helper function to get the correctly signed ledger amount
-                openingCashBalance += getLedgerAmount(t); 
+                // Pass the calculating ledger type: 'cash'
+                openingCashBalance += getLedgerAmount(t, 'cash'); 
             });
         
         // 2. Filter transactions ON the selected date.
@@ -1399,8 +1457,8 @@ async function loadCashLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No cash transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                // Use the new helper function for the correct sign
-                const correctedAmount = getLedgerAmount(entry); 
+                // Pass the calculating ledger type: 'cash'
+                const correctedAmount = getLedgerAmount(entry, 'cash'); 
                 
                 let debit = ""; 
                 let credit = ""; 
@@ -1482,8 +1540,8 @@ async function loadBankLedger(date = null) {
                 return false;
             })
             .forEach((t) => {
-                // Use the new helper function to get the correctly signed ledger amount
-                openingBankBalance += getLedgerAmount(t);
+                // Pass the calculating ledger type: 'bank'
+                openingBankBalance += getLedgerAmount(t, 'bank');
             });
 
         // 2. Filter entries ON the selected date.
@@ -1520,8 +1578,8 @@ async function loadBankLedger(date = null) {
                 '<tr><td colspan="7" style="text-align:center;">No bank transactions for this day.</td></tr>';
         } else {
             entries.forEach((entry) => {
-                // Use the new helper function for the correct sign
-                const correctedAmount = getLedgerAmount(entry);
+                // Pass the calculating ledger type: 'bank'
+                const correctedAmount = getLedgerAmount(entry, 'bank');
 
                 let debit = ""; 
                 let credit = ""; 
