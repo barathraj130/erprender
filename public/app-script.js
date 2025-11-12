@@ -48,7 +48,7 @@ const transactionCategories = [
     // Payments from Customers
     { name: "Payment Received from Customer (Cash)", type: "cash_income", group: "customer_payment", affectsLedger: "cash", relevantTo: "customer" },
     { name: "Payment Received from Customer (Bank)", type: "bank_income", group: "customer_payment", affectsLedger: "bank", relevantTo: "customer" },
-    { name: "Amount Received in Bank (from Customer/Other)", type: "bank_income", group: "customer_payment", affectsLedger: "bank", relevantTo: "customer" }, // Added for calculation
+    { name: "General External Deposit (to Bank)", type: "bank_income", group: "general_inflow", affectsLedger: "bank", relevantTo: "none" }, // Refined/Renamed
     { name: "Payment Received from Customer", type: "unknown_income_OR_asset_decrease", group: "customer_payment", affectsLedger: "unknown", relevantTo: "customer" }, // Added for calculation (generic)
 
     // Customer Loans
@@ -70,12 +70,12 @@ const transactionCategories = [
     { name: "Product Return from Customer (Refund via Cash)", type: "cash_expense", group: "customer_return", isProductSale: true, affectsLedger: "cash", relevantTo: "customer" },
     { name: "Product Return from Customer (Refund via Bank)", type: "bank_expense", group: "customer_return", isProductSale: true, affectsLedger: "bank", relevantTo: "customer" },
     
-    // --- Capital Transactions --- (NEW)
+    // --- Capital Transactions ---
     { name: "Owner's Capital Deposit (to Bank)", type: "bank_income_capital", group: "capital_in", affectsLedger: "bank", relevantTo: "none" },
     { name: "Owner's Capital Deposit (to Cash)", type: "cash_income_capital", group: "capital_in", affectsLedger: "cash", relevantTo: "none" },
     { name: "Owner's Drawing/Withdrawal (from Bank)", type: "bank_expense_capital", group: "capital_out", affectsLedger: "bank", relevantTo: "none" },
     { name: "Owner's Drawing/Withdrawal (from Cash)", type: "cash_expense_capital", group: "capital_out", affectsLedger: "cash", relevantTo: "none" },
-    
+
     // --- Supplier Transactions ---
     // Purchases from Suppliers
     { name: "Purchase from Supplier (On Credit)", type: "payable_increase", group: "supplier_expense", isProductPurchase: true, affectsLedger: "none", relevantTo: "lender" },
@@ -108,7 +108,6 @@ const transactionCategories = [
     { name: "Business Receives Chit Payout (to Bank)", type: "bank_income", group: "biz_chit_in", affectsLedger: "bank", relevantTo: "lender" },
     { name: "Post-Billing Discount Allowed", type: "receivable_decrease", group: "customer_adjustment", affectsLedger: "none", relevantTo: "customer" }, // NEW
     { name: "Invoice Adjustment/Discount", type: "receivable_decrease", group: "customer_adjustment", affectsLedger: "none", relevantTo: "customer" },
-    
     // --- Internal & Operational Transactions ---
     // Bank & Cash Contra
     { name: "Cash Deposited to Bank", type: "neutral_cash_movement", group: "bank_ops", affectsLedger: "both_cash_out_bank_in", relevantTo: "none" },
@@ -146,10 +145,10 @@ const baseTransactionCategories = [
     { name: "Interest on Customer Loan Received", group: "customer_loan_in", relevantTo: "customer", needsPaymentMode: true, defaultSignForParty: -1, categoryPattern: "Interest on Customer Loan Received ({PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
     { name: "Product Return from Customer (Refund)", group: "customer_return", isProductSale: true, relevantTo: "customer", needsPaymentMode: true, defaultSignForParty: 1, categoryPattern: "Product Return from Customer (Refund via {PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" }, // Business pays out
     { name: "Product Return from Customer (Credit Note)", group: "customer_return", isProductSale: true, relevantTo: "customer", needsPaymentMode: false, defaultSignForParty: -1, categoryPattern: "Product Return from Customer (Credit Note)", affectsLedgerPattern: "none" },
-    { name: "Amount Received in Bank (from Customer/Other)", group: "customer_payment", relevantTo: "customer", needsPaymentMode: false, defaultSignForParty: -1, categoryPattern: "Amount Received in Bank (from Customer/Other)", affectsLedgerPattern: "bank" },
+    { name: "General External Deposit (to Bank)", group: "general_inflow", relevantTo: "none", needsPaymentMode: false, defaultSignForParty: 0, categoryPattern: "General External Deposit (to Bank)", affectsLedgerPattern: "bank" }, // NEW/Renamed
     { name: "Sale to Customer (Cash/Direct)", group: "customer_revenue", isProductSale: true, relevantTo: "customer", needsPaymentMode: true, defaultSignForParty: 1, categoryPattern: "Sale to Customer ({PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
 
-    // -- Capital -- (New entries added here)
+    // -- Capital --
     { name: "Owner's Capital Deposit", group: "capital_in", relevantTo: "none", needsPaymentMode: true, defaultSignForParty: 0, categoryPattern: "Owner's Capital Deposit (to {PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
     { name: "Owner's Drawing/Withdrawal", group: "capital_out", relevantTo: "none", needsPaymentMode: true, defaultSignForParty: 0, categoryPattern: "Owner's Drawing/Withdrawal (from {PaymentMode})", affectsLedgerPattern: "{PaymentModeLowerCase}" },
 
@@ -1330,49 +1329,45 @@ function getLedgerAmount(tx, calculatingLedgerType) {
     const catInfo = transactionCategories.find(c => c.name === tx.category);
     if (!catInfo) {
         console.warn(`[getLedgerAmount] Unknown category: ${tx.category}. Using stored amount.`);
-        return amount; // Fallback, though usually undesirable
+        return amount;
     }
     
     const magnitude = Math.abs(amount);
 
     // --- 1. Contra movements (Cash <-> Bank) ---
-    // Stored amount is expected to be positive magnitude for contra entries.
-    if (catInfo.affectsLedger.startsWith('both')) {
-        if (catInfo.affectsLedger === 'both_cash_out_bank_in') { // Cash Deposited to Bank
-            return calculatingLedgerType === 'cash' ? -magnitude : magnitude; // Cash OUT (-), Bank IN (+)
-        }
-        if (catInfo.affectsLedger === 'both_cash_in_bank_out') { // Cash Withdrawn from Bank
-            return calculatingLedgerType === 'cash' ? magnitude : -magnitude; // Cash IN (+), Bank OUT (-)
-        }
-        // If it's a dual entry, but doesn't match the specific ledger we are calculating, ignore it.
-        if (!catInfo.affectsLedger.includes(calculatingLedgerType)) return 0;
+    if (catInfo.affectsLedger === 'both_cash_out_bank_in') { // Cash Deposited to Bank
+        // Cash OUT (-), Bank IN (+)
+        return calculatingLedgerType === 'cash' ? -magnitude : magnitude; 
+    }
+    
+    if (catInfo.affectsLedger === 'both_cash_in_bank_out') { // Cash Withdrawn from Bank
+        // Cash IN (+), Bank OUT (-)
+        return calculatingLedgerType === 'cash' ? magnitude : -magnitude; 
+    }
+    
+    // If the transaction affects a ledger we are not calculating, stop now.
+    if (!catInfo.affectsLedger.includes(calculatingLedgerType)) {
+        return 0;
     }
 
     // --- 2. Customer movements affecting Cash/Bank ---
-    // If a transaction is customer-related (relevantTo: 'customer') and affects a bank/cash ledger, 
-    // the stored sign (which reflects AR ledger: Sale +, Payment -) must be flipped to reflect Cash Flow (Sale -, Payment +).
-    if (tx.user_id && catInfo.relevantTo === 'customer' && catInfo.affectsLedger.includes(calculatingLedgerType)) { 
+    // If customer transaction (Sale/Loan Out is +AR, Payment/Loan In is -AR). 
+    // We flip the sign for cash flow (Sale -, Payment +).
+    if (tx.user_id && catInfo.relevantTo === 'customer') { 
         if (tx.category !== "Opening Balance Adjustment") { 
+            // We flip the original stored amount sign to get the cash flow
             return -amount;
         }
     }
 
     // --- 3. Capital Movements (Owner Deposit/Withdrawal) ---
     // Stored amount is expected to be positive magnitude.
-    if (catInfo.group === 'capital_in' && catInfo.affectsLedger.includes(calculatingLedgerType)) {
-        return magnitude; // Deposit is always INFLOW (Debit)
-    }
-    if (catInfo.group === 'capital_out' && catInfo.affectsLedger.includes(calculatingLedgerType)) {
-        return -magnitude; // Withdrawal is always OUTFLOW (Credit)
-    }
-    
-    // --- 4. Other movements (Lender Txns, Biz Ops, Opening Balances) ---
-    // For these, the stored amount sign is assumed correct for the relevant ledger (Debit=+, Credit=-).
-    if (catInfo.affectsLedger.includes(calculatingLedgerType)) {
-        return amount;
-    }
-    
-    return 0;
+    if (catInfo.group === 'capital_in') return magnitude;    // Deposit is always INFLOW (Debit)
+    if (catInfo.group === 'capital_out') return -magnitude;   // Withdrawal is always OUTFLOW (Credit)
+
+    // --- 4. All Other Movements (Lenders, Biz Ops, Opening Balances, General Inflow) ---
+    // The stored sign is assumed to be correct (Positive = Debit/IN, Negative = Credit/OUT)
+    return amount;
 }
 async function loadCashLedger(date = null) {
     // Determine the selected date string (YYYY-MM-DD)
