@@ -1327,46 +1327,45 @@ function getLedgerAmount(tx, calculatingLedgerType) {
     if (amount === 0) return 0;
     
     const catInfo = transactionCategories.find(c => c.name === tx.category);
-    if (!catInfo) {
-        console.warn(`[getLedgerAmount] Unknown category: ${tx.category}. Using stored amount.`);
-        return amount;
-    }
+    if (!catInfo) return amount; 
     
     const magnitude = Math.abs(amount);
 
     // --- 1. Contra movements (Cash <-> Bank) ---
-    if (catInfo.affectsLedger === 'both_cash_out_bank_in') { // Cash Deposited to Bank
-        // Cash OUT (-), Bank IN (+)
-        return calculatingLedgerType === 'cash' ? -magnitude : magnitude; 
+    if (catInfo.affectsLedger.startsWith('both')) {
+        
+        // Cash Deposited to Bank: Cash OUT (-), Bank IN (+)
+        if (catInfo.affectsLedger === 'both_cash_out_bank_in') {
+            return calculatingLedgerType === 'cash' ? -magnitude : magnitude; 
+        }
+        
+        // Cash Withdrawn from Bank: Cash IN (+), Bank OUT (-)
+        if (catInfo.affectsLedger === 'both_cash_in_bank_out') {
+            return calculatingLedgerType === 'cash' ? magnitude : -magnitude; 
+        }
     }
     
-    if (catInfo.affectsLedger === 'both_cash_in_bank_out') { // Cash Withdrawn from Bank
-        // Cash IN (+), Bank OUT (-)
-        return calculatingLedgerType === 'cash' ? magnitude : -magnitude; 
-    }
-    
-    // If the transaction affects a ledger we are not calculating, stop now.
+    // If the transaction does not affect the current ledger (e.g., trying to read bank transaction in cash ledger)
     if (!catInfo.affectsLedger.includes(calculatingLedgerType)) {
         return 0;
     }
 
     // --- 2. Customer movements affecting Cash/Bank ---
-    // If customer transaction (Sale/Loan Out is +AR, Payment/Loan In is -AR). 
-    // We flip the sign for cash flow (Sale -, Payment +).
+    // Customer payments/sales must have their sign flipped for cash flow.
+    // Stored sign reflects AR Ledger (Sale +, Payment -). Cash Flow is (Sale -, Payment +).
     if (tx.user_id && catInfo.relevantTo === 'customer') { 
         if (tx.category !== "Opening Balance Adjustment") { 
-            // We flip the original stored amount sign to get the cash flow
             return -amount;
         }
     }
 
     // --- 3. Capital Movements (Owner Deposit/Withdrawal) ---
-    // Stored amount is expected to be positive magnitude.
+    // These categories ensure clear IN/OUT flow based on the category group defined.
     if (catInfo.group === 'capital_in') return magnitude;    // Deposit is always INFLOW (Debit)
     if (catInfo.group === 'capital_out') return -magnitude;   // Withdrawal is always OUTFLOW (Credit)
 
     // --- 4. All Other Movements (Lenders, Biz Ops, Opening Balances, General Inflow) ---
-    // The stored sign is assumed to be correct (Positive = Debit/IN, Negative = Credit/OUT)
+    // The stored sign must be respected (Positive = Debit/IN, Negative = Credit/OUT)
     return amount;
 }
 async function loadCashLedger(date = null) {
