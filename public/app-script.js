@@ -1327,7 +1327,10 @@ function getLedgerAmount(tx, calculatingLedgerType) {
     if (amount === 0) return 0;
     
     const catInfo = transactionCategories.find(c => c.name === tx.category);
-    if (!catInfo) return amount; 
+    if (!catInfo) {
+        console.warn(`[getLedgerAmount] Unknown category: ${tx.category}. Using stored amount.`);
+        return amount;
+    }
     
     const magnitude = Math.abs(amount);
 
@@ -1360,12 +1363,12 @@ function getLedgerAmount(tx, calculatingLedgerType) {
     }
 
     // --- 3. Capital Movements (Owner Deposit/Withdrawal) ---
-    // These categories ensure clear IN/OUT flow based on the category group defined.
+    // Stored amount is expected to be positive magnitude.
     if (catInfo.group === 'capital_in') return magnitude;    // Deposit is always INFLOW (Debit)
     if (catInfo.group === 'capital_out') return -magnitude;   // Withdrawal is always OUTFLOW (Credit)
 
     // --- 4. All Other Movements (Lenders, Biz Ops, Opening Balances, General Inflow) ---
-    // The stored sign must be respected (Positive = Debit/IN, Negative = Credit/OUT)
+    // The stored sign is assumed to be correct (Positive = Debit/IN, Negative = Credit/OUT)
     return amount;
 }
 async function loadCashLedger(date = null) {
